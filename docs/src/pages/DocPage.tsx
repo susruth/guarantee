@@ -11,7 +11,7 @@ const sections = [
   },
   {
     label: "Examples",
-    slugs: ["hello-tee", "oracle", "btc-signer", "postgres-encrypted", "redis-cache"],
+    slugs: ["hello-tee", "oracle", "btc-signer", "postgres-encrypted", "redis-cache", "websocket-ratls"],
   },
 ];
 

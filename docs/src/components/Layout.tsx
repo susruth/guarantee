@@ -20,6 +20,7 @@ const PAGE_TITLES: Record<string, string> = {
   "btc-signer": "Bitcoin Signer Example — SGX Key Custody | Guarantee SDK",
   "postgres-encrypted": "Encrypted Postgres Example — Field-Level AES | Guarantee SDK",
   "redis-cache": "Encrypted Redis Example — Selective Cache Encryption | Guarantee SDK",
+  "websocket-ratls": "WebSocket RA-TLS Example — Attested Real-Time Streaming | Guarantee SDK",
   "verify": "Verify SGX Attestation — X-TEE-Attestation Header Checker | Guarantee",
 };
 

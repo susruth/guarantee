@@ -177,6 +177,7 @@ async fn main() {
           ["postgres-encrypted", "Database", "Encrypted Postgres", "AES-256-GCM field encryption before INSERT. The database stores only ciphertext. Keys are derived from the enclave master key and never written to disk in plaintext."],
           ["redis-cache", "Cache", "Encrypted Redis", "Selective field encryption for cache values. Sensitive fields encrypted with per-key derivation. Queryable fields left in plaintext. Zero change to Redis configuration."],
           ["ra-tls", "Transport", "RA-TLS", "Remote attestation embedded in TLS handshakes. The client verifies the enclave identity before the connection is established — attestation at the transport layer."],
+          ["websocket-ratls", "Streaming", "WebSocket RA-TLS", "Real-time attested data streaming. WebSocket over RA-TLS — the entire channel is authenticated to the enclave with zero per-message overhead."],
         ].map(([slug, tag, title, desc]) => (
           <Link to={`/docs/${slug}`} className="home-example-card" key={slug}>
             <span className="home-example-tag">{tag}</span>

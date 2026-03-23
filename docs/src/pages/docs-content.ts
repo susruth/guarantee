@@ -2318,4 +2318,168 @@ async fn main() {
       },
     ],
   },
+
+  // =========================================================================
+  // WebSocket RA-TLS
+  // =========================================================================
+  {
+    slug: "websocket-ratls",
+    title: "WebSocket Over RA-TLS",
+    lead: "Real-time attested data streaming. The TLS handshake verifies the SGX quote — the entire WebSocket channel is authenticated to the enclave with zero per-message overhead.",
+    section: "Examples",
+    body: [
+      {
+        heading: "Overview",
+        text: "This example combines WebSocket real-time streaming with RA-TLS attestation. The TLS certificate carries the SGX attestation quote, so by the time the WebSocket connection is established, the client has cryptographic proof they're talking to a genuine enclave. No per-message signing needed — the entire channel is attested at the transport layer.",
+      },
+      {
+        heading: "Run It",
+        code: `# HTTP mode (dev, no SGX)
+cargo run --example websocket-ratls
+
+# With RA-TLS (attested TLS)
+cargo run --example websocket-ratls --features ra-tls`,
+        lang: "bash",
+      },
+      {
+        heading: "Connect",
+        code: `# Install wscat: npm install -g wscat
+wscat -c ws://localhost:8080/ws
+
+# Subscribe to price feed
+> {"type":"subscribe","channel":"prices"}
+< {"type":"subscribed","channel":"prices"}
+
+# Prices stream every 2 seconds
+< {"type":"price_update","channel":"prices","data":{"symbol":"BTC","price":67150.00,...}}
+< {"type":"price_update","channel":"prices","data":{"symbol":"ETH","price":3525.00,...}}
+
+# Unsubscribe
+> {"type":"unsubscribe","channel":"prices"}
+
+# Ping/pong heartbeat
+> {"type":"ping"}
+< {"type":"pong"}`,
+        lang: "bash",
+      },
+      {
+        heading: "State Management",
+        text: "The example uses two-tier sealed state. StreamStats (MRENCLAVE) tracks connection counts and resets on redeploy. StreamConfig (MRSIGNER) holds persistent settings that survive code updates.",
+        code: `#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct StreamStats {
+    total_connections: u64,
+    total_messages_sent: u64,
+    active_subscriptions: u64,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct StreamConfig {
+    max_clients: u32,
+    price_update_interval_ms: u64,
+}
+
+state! {
+    #[mrenclave]
+    StreamStats,
+
+    #[mrsigner]
+    StreamConfig,
+}`,
+        lang: "rust",
+      },
+      {
+        heading: "WebSocket Handler",
+        text: "The handler upgrades HTTP to WebSocket. Clients subscribe to channels and receive real-time updates via a Tokio broadcast channel. The connection is already attested via RA-TLS.",
+        code: `async fn ws_handler(
+    ws: WebSocketUpgrade,
+    Extension(tee_state): Extension<Arc<RwLock<TeeState>>>,
+    Extension(price_tx): Extension<broadcast::Sender<PriceUpdate>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, tee_state, price_tx))
+}
+
+async fn handle_socket(
+    mut socket: WebSocket,
+    tee_state: Arc<RwLock<TeeState>>,
+    price_tx: broadcast::Sender<PriceUpdate>,
+) {
+    let mut price_rx = price_tx.subscribe();
+    let mut subscribed = false;
+
+    loop {
+        tokio::select! {
+            // Handle client messages (subscribe/unsubscribe/ping)
+            msg = socket.recv() => { /* ... */ }
+
+            // Forward price updates to subscribed clients
+            update = price_rx.recv() => {
+                if let Ok(price) = update {
+                    if subscribed {
+                        let json = serde_json::to_string(&price).unwrap_or_default();
+                        if socket.send(Message::Text(json.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}`,
+        lang: "rust",
+      },
+      {
+        heading: "Dual Mode Server",
+        text: "In dev mode, runs as plain HTTP WebSocket. With the ra-tls feature flag and USE_RATLS=1, starts dual-port: HTTPS with RA-TLS cert on 8443 + HTTP on 8080.",
+        code: `let app = Router::new()
+    .route("/ws", get(ws_handler))
+    .route("/stats", get(get_stats))
+    .route("/.well-known/tee-attestation", get(attestation_info))
+    .layer(Extension(tee_state))
+    .layer(Extension(price_tx));
+
+#[cfg(feature = "ra-tls")]
+{
+    // HTTPS with SGX quote in TLS cert + plain HTTP for health checks
+    guarantee::serve_ra_tls(app, "ws-service", "0.0.0.0:8443", "0.0.0.0:8080").await?;
+}`,
+        lang: "rust",
+      },
+      {
+        heading: "Client Messages",
+        table: {
+          headers: ["Type", "Payload", "Description"],
+          rows: [
+            ["subscribe", '{"type":"subscribe","channel":"prices"}', "Start receiving price updates"],
+            ["unsubscribe", '{"type":"unsubscribe","channel":"prices"}', "Stop receiving updates"],
+            ["ping", '{"type":"ping"}', "Heartbeat — server replies with pong"],
+          ],
+        },
+      },
+      {
+        heading: "Server Messages",
+        table: {
+          headers: ["Type", "Description"],
+          rows: [
+            ["connected", "Sent on connection — includes welcome message"],
+            ["subscribed", "Confirms subscription to a channel"],
+            ["unsubscribed", "Confirms unsubscription"],
+            ["price_update", "Real-time price data (symbol, price, timestamp, source)"],
+            ["pong", "Reply to client ping"],
+            ["error", "Invalid message format"],
+          ],
+        },
+      },
+      {
+        heading: "Key Points",
+        list: [
+          "No per-message signing — RA-TLS authenticates the entire channel at the TLS layer",
+          "broadcast::channel fans out price updates to all connected WebSocket clients",
+          "REST endpoints alongside WebSocket use #[attest] for per-response attestation (belt and suspenders)",
+          "Dev mode works without SGX — same code, same protocol, plain HTTP",
+          "StreamStats sealed with MRENCLAVE resets on redeploy (ephemeral counters)",
+          "StreamConfig sealed with MRSIGNER persists across code updates",
+        ],
+      },
+    ],
+  },
 ];
