@@ -21,20 +21,22 @@ export function Home() {
             Managed deployment → guarantee.rs ↗
           </a>
         </div>
-        <div className="home-hero-graphic">
-          <div className="home-hero-art">
-            <div style={{ position: "absolute", bottom: 0, left: 0, width: "40%", height: "60%", borderTop: "var(--border-thin)", borderRight: "var(--border-thin)" }} />
-            <div style={{ position: "absolute", top: "20%", right: "10%", width: "50%", height: "50%", border: "var(--border-thin)" }} />
-            <div style={{ position: "absolute", top: "8%", left: "15%", width: "25%", height: "30%", borderBottom: "var(--border-thin)", borderLeft: "var(--border-thin)" }} />
+        <div className="home-hero-terminal">
+          <div className="home-hero-terminal-bar">
+            <span className="home-hero-terminal-dot" />
+            <span className="home-hero-terminal-dot" />
+            <span className="home-hero-terminal-dot" />
           </div>
-          <div className="home-hero-curl">
-            <div>$ curl -i https://oracle.example.com/price</div>
-            <br />
-            <div>HTTP/2 200</div>
-            <div>x-tee-attestation: v=1; sig=mFz3...rK9=;</div>
-            <div>{"  "}hash=a4f2...91c; ts=1743724800; key=04ab...f3</div>
-            <div>x-tee-verified: true</div>
-          </div>
+          <pre className="home-hero-terminal-body"><code>{`$ curl -i https://oracle.example.com/price
+
+HTTP/2 200
+x-tee-attestation: v=1; sig=mFz3...rK9=;
+  hash=a4f2...91c; ts=1743724800;
+  key=04ab...f3
+x-tee-verified: true
+x-tee-request-id: 7a3b...e91f
+
+{"symbol":"BTC","price":67432.50}`}</code></pre>
         </div>
       </section>
 

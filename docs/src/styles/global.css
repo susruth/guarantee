@@ -29,6 +29,12 @@
 
 html {
   scroll-behavior: smooth;
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  display: none;
 }
 
 body {
@@ -124,6 +130,10 @@ pre code {
   margin-bottom: var(--space-md);
 }
 
+.site-header-home {
+  margin-bottom: var(--space-xl);
+}
+
 .header-top {
   display: flex;
   justify-content: space-between;
@@ -139,6 +149,10 @@ pre code {
   line-height: 1;
   text-transform: uppercase;
   letter-spacing: -0.02em;
+}
+
+.logo-text-home {
+  font-size: clamp(3rem, 8vw, 6rem);
 }
 
 .header-nav {
@@ -256,29 +270,35 @@ pre code {
   line-height: 1.6;
 }
 
-.home-hero-graphic {
-  padding: var(--space-md);
+.home-hero-terminal {
   border: var(--border-thin);
-  min-height: 320px;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  align-self: start;
+}
+
+.home-hero-terminal-bar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: var(--border-thin);
+}
+
+.home-hero-terminal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: var(--border-thin);
+}
+
+.home-hero-terminal-body {
+  padding: var(--space-md);
   font-family: var(--font-mono);
   font-size: 0.82rem;
-}
-
-.home-hero-art {
-  flex-grow: 1;
-  border-bottom: var(--border-thin);
-  margin-bottom: 1rem;
-  position: relative;
-  overflow: hidden;
-}
-
-.home-hero-curl {
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: var(--fg);
+  line-height: 1.6;
+  margin: 0;
+  white-space: pre;
+  overflow-x: auto;
 }
 
 .home-tertiary-link {

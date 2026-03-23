@@ -43,11 +43,13 @@ export function Layout() {
     }
   }, [pathname]);
 
+  const isHome = pathname === "/";
+
   return (
     <div className="container">
-      <header className="site-header">
+      <header className={`site-header${isHome ? " site-header-home" : ""}`}>
         <div className="header-top">
-          <Link to="/" className="logo-text">
+          <Link to="/" className={`logo-text${isHome ? " logo-text-home" : ""}`}>
             Guarantee
           </Link>
           <nav className="header-nav mono">
