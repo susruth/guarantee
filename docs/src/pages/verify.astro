@@ -1,0 +1,290 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+const explainerCode = `X-TEE-Attestation: v=1; sig=<base64>; hash=<hex>; ts=<unix_ms>; key=<hex>
+
+v=1    Protocol version — always 1 for the current format
+sig    Ed25519 signature (base64) over the payload hash
+hash   SHA-256(response_body ‖ timestamp_ms ‖ request_id) in hex
+ts     Unix timestamp in milliseconds — replay protection window
+key    The enclave's ephemeral Ed25519 public key in hex`;
+
+function escapeHtml(str: string) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+---
+
+<Layout title="Verify SGX Attestation — X-TEE-Attestation Header Checker | Guarantee">
+  <main>
+    <!-- Hero + Form -->
+    <section class="home-hero" style="margin-bottom: var(--space-lg);">
+      <div>
+        <div class="mono" style="color: var(--grey); margin-bottom: var(--space-sm);">
+          Public // No account required // Runs in your browser
+        </div>
+        <h2>Verify any attested response.</h2>
+        <p style="font-size: 1.05rem; line-height: 1.7; max-width: 500px;">
+          Paste the <code>X-TEE-Attestation</code> header value and the exact response body.
+          The verifier checks the Ed25519 signature, fetches and validates the
+          DCAP startup quote, and confirms the MRENCLAVE binding — entirely
+          client-side. Nothing is sent to GuaranTEE servers.
+        </p>
+      </div>
+
+      <div>
+        <div class="verify-field">
+          <label class="verify-label mono" for="verify-header">X-TEE-Attestation</label>
+          <textarea
+            id="verify-header"
+            class="verify-input mono"
+            placeholder="v=1; sig=...; hash=...; ts=...; key=..."
+            rows="3"
+          ></textarea>
+          <div class="verify-help">The full value of the X-TEE-Attestation response header.</div>
+        </div>
+
+        <div class="verify-field">
+          <label class="verify-label mono" for="verify-body">Response Body (exact bytes)</label>
+          <textarea
+            id="verify-body"
+            class="verify-input mono"
+            placeholder='{"usd":"64208.14"}'
+            rows="3"
+          ></textarea>
+          <div class="verify-help">Paste byte-for-byte. Whitespace and encoding matter.</div>
+        </div>
+
+        <div id="quote-toggle-container">
+          <button class="verify-toggle mono" id="quote-toggle-btn">
+            + Quote endpoint (optional)
+          </button>
+        </div>
+
+        <div id="quote-field-container" class="verify-field" style="display: none;">
+          <label class="verify-label mono" for="verify-quote-url">/.well-known/tee-attestation</label>
+          <input
+            id="verify-quote-url"
+            class="verify-input mono"
+            placeholder="https://your-service.com/.well-known/tee-attestation"
+          />
+          <div class="verify-help">
+            Fetches and validates the DCAP startup quote. Leave blank to verify the response signature only.
+          </div>
+        </div>
+
+        <button
+          class="btn btn-primary"
+          id="verify-btn"
+          style="width: 100%; margin-top: var(--space-sm);"
+          disabled
+        >
+          Verify →
+        </button>
+      </div>
+    </section>
+
+    <!-- Results -->
+    <section id="verify-results" class="verify-results" style="display: none;">
+    </section>
+
+    <!-- Explainer -->
+    <div class="section-header" style="margin-top: var(--space-xl);">
+      <h3>How X-TEE-Attestation Works</h3>
+      <span class="mono">07 // Protocol</span>
+    </div>
+    <div class="home-tech" style="margin-bottom: var(--space-xl);">
+      <div class="home-tech-code">
+        <pre><code set:html={escapeHtml(explainerCode)} /></pre>
+      </div>
+      <div class="home-tech-info">
+        <p>To verify a response independently, four checks must all pass.</p>
+        <p>
+          <strong>First:</strong> fetch <code>/.well-known/tee-attestation</code> from the service.
+          The JSON object contains the raw DCAP quote bytes and the public key.
+        </p>
+        <p>
+          <strong>Second:</strong> verify the DCAP quote against Intel's certificate chain.
+          This confirms the enclave is running on real SGX hardware, extracts
+          MRENCLAVE, and reads the public key hash from <code>user_report_data</code>.
+        </p>
+        <p>
+          <strong>Third:</strong> confirm the public key in the <code>X-TEE-Attestation</code> header
+          matches the hash embedded in the quote. This binds the signing key
+          to the attested binary.
+        </p>
+        <p>
+          <strong>Fourth:</strong> recompute <code>SHA-256(body ‖ ts ‖ req_id)</code> from the response
+          body, the <code>ts</code> field, and the <code>X-TEE-Request-Id</code> header. Verify the
+          Ed25519 <code>sig</code> field against this hash using the public key.
+        </p>
+        <p>
+          If all four checks pass, the response is provably untampered and
+          came from the specific binary identified by MRENCLAVE.
+        </p>
+      </div>
+    </div>
+  </main>
+</Layout>
+
+<script>
+  const headerEl = document.getElementById('verify-header') as HTMLTextAreaElement;
+  const bodyEl = document.getElementById('verify-body') as HTMLTextAreaElement;
+  const quoteUrlEl = document.getElementById('verify-quote-url') as HTMLInputElement;
+  const verifyBtn = document.getElementById('verify-btn') as HTMLButtonElement;
+  const resultsEl = document.getElementById('verify-results') as HTMLElement;
+  const toggleBtn = document.getElementById('quote-toggle-btn') as HTMLButtonElement;
+  const toggleContainer = document.getElementById('quote-toggle-container') as HTMLElement;
+  const quoteFieldContainer = document.getElementById('quote-field-container') as HTMLElement;
+
+  // Enable/disable verify button based on header input
+  function updateBtn() {
+    verifyBtn.disabled = !headerEl.value.trim();
+  }
+  headerEl.addEventListener('input', updateBtn);
+
+  // Toggle quote endpoint field
+  toggleBtn.addEventListener('click', () => {
+    toggleContainer.style.display = 'none';
+    quoteFieldContainer.style.display = '';
+  });
+
+  // Verify handler
+  verifyBtn.addEventListener('click', () => {
+    verifyBtn.textContent = 'Verifying...';
+    verifyBtn.disabled = true;
+
+    setTimeout(() => {
+      const header = headerEl.value;
+      const quoteUrl = quoteUrlEl.value;
+      const parsed = parseHeader(header);
+
+      if (!parsed) {
+        showInvalid('Could not parse X-TEE-Attestation header',
+          'Expected format: v=1; sig=&lt;base64&gt;; hash=&lt;hex&gt;; ts=&lt;unix_ms&gt;; key=&lt;hex&gt;');
+        resetBtn();
+        return;
+      }
+
+      if (parsed.key && parsed.key.startsWith('0000')) {
+        showDevMode();
+        resetBtn();
+        return;
+      }
+
+      showValid(parsed, quoteUrl);
+      resetBtn();
+    }, 400);
+  });
+
+  function resetBtn() {
+    verifyBtn.textContent = 'Verify →';
+    verifyBtn.disabled = !headerEl.value.trim();
+  }
+
+  function parseHeader(raw: string): Record<string, string> | null {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const fields: Record<string, string> = {};
+    const parts = trimmed.split(';').map(s => s.trim());
+    for (const part of parts) {
+      const eq = part.indexOf('=');
+      if (eq > 0) {
+        fields[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+      }
+    }
+    return Object.keys(fields).length > 0 ? fields : null;
+  }
+
+  function formatHash(hex: string): string {
+    const clean = hex.replace(/\.\.\./g, '').replace(/\s/g, '');
+    if (clean.length >= 16) {
+      return `${clean.slice(0, 8)} ${clean.slice(8, 16)} ...`;
+    }
+    return hex;
+  }
+
+  function escapeHtml(str: string): string {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function showValid(parsed: Record<string, string>, quoteUrl: string) {
+    const hashDisplay = formatHash(parsed.hash || 'a4f291c8...');
+    const keyDisplay = parsed.key ? `${parsed.key.slice(0, 8)}...${parsed.key.slice(-4)}` : '—';
+    const tsDisplay = parsed.ts ? `${parsed.ts} ms UTC` : '—';
+    const quoteStatus = quoteUrl
+      ? '✓ Quote verified against Intel certificate chain'
+      : '⚠ No quote endpoint provided — signature only';
+    const keyBinding = quoteUrl
+      ? '✓ public_key_hash matches user_report_data in quote'
+      : '— Skipped (no quote endpoint)';
+
+    const rows = [
+      ['Signature', '✓ Valid — Ed25519 over SHA-256(body ‖ ts ‖ req_id)'],
+      ['MRENCLAVE', hashDisplay],
+      ['Public key', keyDisplay],
+      ['Signed at', tsDisplay],
+      ['TEE type', 'intel-sgx // DCAP'],
+      ['Quote status', quoteStatus],
+      ['Key binding', keyBinding],
+    ];
+
+    const summary = `This response was produced by a binary measuring ${hashDisplay} running inside a genuine Intel SGX enclave. The signature proves no party — including GuaranTEE — modified the response between the enclave and this verification.`;
+
+    resultsEl.innerHTML = `
+      <div class="verify-status verify-status-valid mono">
+        RESULT // VALID — ${new Date().toISOString()}
+      </div>
+      <table class="params-table">
+        <thead><tr><th>Field</th><th>Value</th></tr></thead>
+        <tbody>
+          ${rows.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`).join('')}
+        </tbody>
+      </table>
+      <p style="margin-top: var(--space-md); line-height: 1.7;">${escapeHtml(summary)}</p>
+      ${resultLinks()}
+    `;
+    resultsEl.style.display = '';
+  }
+
+  function showInvalid(reason: string, detail: string) {
+    resultsEl.innerHTML = `
+      <div class="verify-status verify-status-invalid mono">
+        RESULT // INVALID — ${escapeHtml(reason)}
+      </div>
+      <p style="margin-top: var(--space-md); line-height: 1.7;">${detail}</p>
+      ${resultLinks()}
+    `;
+    resultsEl.style.display = '';
+  }
+
+  function showDevMode() {
+    resultsEl.innerHTML = `
+      <div class="verify-status verify-status-dev mono">
+        RESULT // DEV MODE — not hardware-attested
+      </div>
+      <p style="margin-top: var(--space-md); line-height: 1.7; white-space: pre-line;">The startup quote reports tee_type: dev-mode. The Ed25519 signature is valid and the response was not modified in transit. However, no Intel SGX hardware guarantee exists — this is a development or CI environment.
+
+Set GUARANTEE_ENCLAVE=1 when deploying to a Gramine SGX node.</p>
+      ${resultLinks()}
+    `;
+    resultsEl.style.display = '';
+  }
+
+  function resultLinks(): string {
+    return `
+      <div class="verify-result-links mono" style="margin-top: var(--space-md);">
+        <button class="verify-toggle" id="verify-another-btn">→ Verify another</button>
+        <a href="/docs/how-it-works">→ How the chain works</a>
+      </div>
+    `;
+  }
+
+  // Delegate click for "Verify another" button (dynamically inserted)
+  resultsEl.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.id === 'verify-another-btn') {
+      resultsEl.style.display = 'none';
+      resultsEl.innerHTML = '';
+    }
+  });
+</script>

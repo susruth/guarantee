@@ -35,7 +35,13 @@ const sections = [
 const allSlugs = sections.flatMap((s) => s.slugs);
 
 export const getStaticPaths: GetStaticPaths = () => {
-  return allSlugs.map((slug) => ({ params: { slug } }));
+  const slugs = [
+    "getting-started", "how-it-works",
+    "attestation", "state", "encryption", "sealing",
+    "attest-macro", "state-macro", "encrypted-derive", "crypto", "enclave-attestor", "ra-tls", "errors",
+    "hello-tee", "oracle", "btc-signer", "postgres-encrypted", "redis-cache", "websocket-ratls",
+  ];
+  return slugs.map((slug) => ({ params: { slug } }));
 };
 
 const { slug } = Astro.params;
