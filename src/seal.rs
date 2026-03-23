@@ -81,16 +81,25 @@ fn unseal_dev(path: &Path, mode: SealMode) -> Result<Vec<u8>, SdkError> {
     Ok(data)
 }
 
-// SGX mode: use /dev/attestation for real sealing.
-// Placeholder -- real SGX sealing uses sgx_seal_data.
-fn seal_sgx(data: &[u8], path: &Path, mode: SealMode) -> Result<(), SdkError> {
-    tracing::warn!("SGX sealing not yet implemented -- using dev mode fallback");
-    seal_dev(data, path, mode)
+// SGX mode: write/read raw bytes — Gramine Protected Files handle encryption transparently.
+// The file at `path` must be listed under `sgx.protected_files` or `sgx.protected_mrsigner_files`
+// in the Gramine manifest so that Gramine intercepts the I/O and applies SGX sealing.
+fn seal_sgx(data: &[u8], path: &Path, _mode: SealMode) -> Result<(), SdkError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| SdkError::SealError(format!("Create dir: {e}")))?;
+    }
+    std::fs::write(path, data)
+        .map_err(|e| SdkError::SealError(format!("Write sealed: {e}")))?;
+    tracing::debug!(path = %path.display(), "Sealed data (enclave mode — Gramine PF)");
+    Ok(())
 }
 
-fn unseal_sgx(path: &Path, mode: SealMode) -> Result<Vec<u8>, SdkError> {
-    tracing::warn!("SGX unsealing not yet implemented -- using dev mode fallback");
-    unseal_dev(path, mode)
+fn unseal_sgx(path: &Path, _mode: SealMode) -> Result<Vec<u8>, SdkError> {
+    let data = std::fs::read(path)
+        .map_err(|e| SdkError::SealError(format!("Read sealed: {e}")))?;
+    tracing::debug!(path = %path.display(), "Unsealed data (enclave mode — Gramine PF)");
+    Ok(data)
 }
 
 /// Sign a response body using an enclave signing key.
@@ -200,5 +209,58 @@ mod tests {
     struct SigningKeyWrapper {
         #[serde(with = "super::signing_key_serde")]
         key: ed25519_dalek::SigningKey,
+    }
+
+    // ── SGX mode unit tests ───────────────────────────────────────────────────
+    // These call seal_sgx / unseal_sgx directly (bypassing the enclave-mode env
+    // var) so they run in normal CI without SGX hardware.  The invariant being
+    // tested is that the raw byte representation is stored with no header prefix;
+    // Gramine Protected Files supply the encryption transparently at the OS layer.
+
+    #[test]
+    fn seal_sgx_writes_raw_data_no_header() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("test.sealed");
+        let data = b"test data";
+
+        seal_sgx(data, &path, SealMode::MrEnclave).expect("seal_sgx");
+
+        let read_back = std::fs::read(&path).expect("read back");
+        // Enclave mode must write raw bytes — no header prefix.
+        assert_eq!(read_back, data);
+    }
+
+    #[test]
+    fn unseal_sgx_reads_raw_data() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("test.sealed");
+        let raw = b"raw json data";
+        std::fs::write(&path, raw).expect("write");
+
+        let recovered = unseal_sgx(&path, SealMode::MrEnclave).expect("unseal_sgx");
+        assert_eq!(recovered, raw);
+    }
+
+    #[test]
+    fn seal_unseal_sgx_roundtrip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("roundtrip.sealed");
+        let data = b"enclave state payload";
+
+        seal_sgx(data, &path, SealMode::MrEnclave).expect("seal_sgx");
+        let recovered = unseal_sgx(&path, SealMode::MrEnclave).expect("unseal_sgx");
+        assert_eq!(recovered, data);
+    }
+
+    #[test]
+    fn seal_sgx_creates_parent_directories() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested").join("deep").join("test.sealed");
+        let data = b"nested payload";
+
+        seal_sgx(data, &path, SealMode::MrSigner).expect("seal_sgx with nested path");
+        assert!(path.exists());
+        let read_back = std::fs::read(&path).expect("read back");
+        assert_eq!(read_back, data);
     }
 }
