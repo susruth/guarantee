@@ -6,7 +6,7 @@
     "dev": "vocs dev",
     "build": "vocs build",
     "preview": "vocs preview",
-    "deploy": "vocs build && npx wrangler pages deploy docs/dist --project-name=guarantee-docs"
+    "deploy": "vocs build && npx wrangler pages deploy dist --project-name=guarantee-docs"
   },
   "devDependencies": {
     "@types/bun": "latest"
