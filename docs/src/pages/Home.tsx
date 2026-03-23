@@ -4,96 +4,84 @@ export function Home() {
   return (
     <main>
       {/* ── Hero ── */}
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: "var(--space-xl)",
-          marginBottom: "var(--space-xl)",
-          alignItems: "start",
-        }}
-      >
-        <div>
-          <h2>Prove your code runs inside a TEE.</h2>
-          <p style={{ fontSize: "1.2rem", maxWidth: 500, marginBottom: "var(--space-md)", lineHeight: 1.6 }}>
-            One macro adds hardware-backed Ed25519 signatures to every HTTP response. Callers verify the attestation
-            chain without trusting your infrastructure.
+      <section className="home-hero">
+        <div className="home-hero-text">
+          <h2>Prove your code runs where you say it runs.</h2>
+          <p>
+            Add <code>#[attest]</code> to any axum handler. Guarantee generates an Ed25519 keypair
+            inside the enclave, binds it to the enclave measurement with an SGX DCAP
+            quote, and signs every response. Callers verify the full chain — hardware
+            to JSON — without trusting you, your servers, or GuaranTEE.
           </p>
-          <div style={{ display: "flex", gap: "var(--space-sm)", flexWrap: "wrap" }}>
-            <Link to="/docs/getting-started" className="btn btn-primary">
-              Get Started
-            </Link>
-            <Link to="/docs/how-it-works" className="btn btn-outline">
-              How It Works
-            </Link>
+          <div className="btn-group">
+            <Link to="/docs/getting-started" className="btn btn-primary">Get Started</Link>
+            <Link to="/docs/how-it-works" className="btn btn-outline">How It Works</Link>
           </div>
+          <a href="https://guarantee.rs" target="_blank" rel="noopener noreferrer" className="home-tertiary-link">
+            Managed deployment → guarantee.rs ↗
+          </a>
         </div>
-        <div
-          className="mono"
-          style={{
-            padding: "var(--space-md)",
-            border: "var(--border-thin)",
-            minHeight: 320,
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "flex-end",
-          }}
-        >
-          <div
-            style={{
-              flexGrow: 1,
-              borderBottom: "var(--border-thin)",
-              marginBottom: "1rem",
-              position: "relative",
-              overflow: "hidden",
-            }}
-          >
+        <div className="home-hero-graphic">
+          <div className="home-hero-art">
             <div style={{ position: "absolute", bottom: 0, left: 0, width: "40%", height: "60%", borderTop: "var(--border-thin)", borderRight: "var(--border-thin)" }} />
             <div style={{ position: "absolute", top: "20%", right: "10%", width: "50%", height: "50%", border: "var(--border-thin)" }} />
             <div style={{ position: "absolute", top: "8%", left: "15%", width: "25%", height: "30%", borderBottom: "var(--border-thin)", borderLeft: "var(--border-thin)" }} />
           </div>
-          <div>STATE: UNTRUSTED_HOST -&gt; SECURE_ENCLAVE</div>
-          <div>VERIFICATION: ATTESTED // ED25519</div>
+          <div className="home-hero-curl">
+            <div>$ curl -i https://oracle.example.com/price</div>
+            <br />
+            <div>HTTP/2 200</div>
+            <div>x-tee-attestation: v=1; sig=mFz3...rK9=;</div>
+            <div>{"  "}hash=a4f2...91c; ts=1743724800; key=04ab...f3</div>
+            <div>x-tee-verified: true</div>
+          </div>
         </div>
       </section>
 
-      {/* ── Core Principles ── */}
-      <SectionHeader title="Core Principles" label="01 // Architecture" />
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          borderBottom: "var(--border-thin)",
-          marginBottom: "var(--space-xl)",
-        }}
-      >
-        <GridItem title="Hardware Attestation" text="Every response is signed with an ephemeral Ed25519 key bound to the enclave's hardware measurement via an SGX DCAP quote. Verifiable by anyone, no trust required." />
-        <GridItem title="Sealed State" text="Two-tier encrypted persistence. MRENCLAVE state resets per deploy — caches and sessions. MRSIGNER state persists across versions — private keys and master config." />
-        <GridItem title="Zero Boilerplate" text="Same binary runs locally in dev mode and inside Gramine SGX in production. No conditional compilation. No SGX expertise. Add one attribute, ship attested responses." last />
-      </section>
+      {/* ── 01 Core Principles ── */}
+      <div className="section-header">
+        <h3>Core Principles</h3>
+        <span className="mono">01 // Architecture</span>
+      </div>
+      <div className="home-grid-3">
+        <div className="home-grid-item">
+          <h3>Hardware Attestation</h3>
+          <p>Every response is signed with an ephemeral Ed25519 key. The key is bound to the exact binary measurement (MRENCLAVE) via an Intel SGX DCAP quote. Any caller verifies the chain independently — no trust in the operator required.</p>
+        </div>
+        <div className="home-grid-item">
+          <h3>Sealed State</h3>
+          <p>Two-tier encrypted persistence. MRENCLAVE state resets on redeploy — correct for caches and ephemeral sessions. MRSIGNER state survives binary updates — correct for private keys and long-lived configuration.</p>
+        </div>
+        <div className="home-grid-item">
+          <h3>Zero Conditional Compilation</h3>
+          <p>The same binary runs in dev mode on a laptop and inside a Gramine SGX enclave in production. No <code>#[cfg(feature = "sgx")]</code>. No hardware needed to develop or test. Set <code>GUARANTEE_ENCLAVE=1</code> at deploy time.</p>
+        </div>
+      </div>
 
-      {/* ── Quickstart ── */}
-      <SectionHeader title="Implementation" label="02 // Quickstart" />
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 2fr",
-          borderTop: "var(--border-thin)",
-          borderBottom: "var(--border-thin)",
-          marginBottom: "var(--space-xl)",
-        }}
-      >
-        <div style={{ padding: "var(--space-md)", borderRight: "var(--border-thin)" }}>
-          <p style={{ marginBottom: "var(--space-md)", lineHeight: 1.6 }}>
-            Add Guarantee to your Rust project. Annotate any axum handler with <code>#[attest]</code> and every response
-            gets a cryptographic signature bound to the enclave identity.
+      {/* ── 02 Quickstart ── */}
+      <div className="section-header">
+        <h3>Implementation</h3>
+        <span className="mono">02 // Quickstart</span>
+      </div>
+      <div className="home-tech">
+        <div className="home-tech-info">
+          <p>
+            Install the crate. Annotate any axum handler with <code>#[attest]</code>. On first request,
+            the SDK reads the DCAP quote from <code>/dev/attestation</code>, extracts MRENCLAVE, and
+            binds the ephemeral signing key. Every subsequent response carries a verifiable
+            signature. No other changes to your service.
           </p>
-          <InstallBox text="$ cargo add guarantee" />
-          <InstallBox text="$ cargo run --example hello-tee" />
+          <div className="install-box">
+            <span>$ cargo add guarantee</span>
+            <span className="install-box-copy" onClick={() => navigator.clipboard.writeText("cargo add guarantee")}>[COPY]</span>
+          </div>
+          <div className="install-box">
+            <span>$ cargo run --example hello-tee</span>
+            <span className="install-box-copy" onClick={() => navigator.clipboard.writeText("cargo run --example hello-tee")}>[COPY]</span>
+          </div>
         </div>
-        <div style={{ padding: "var(--space-md)" }}>
-          <pre>
-            <code>{`// Attested HTTP service in 20 lines
+        <div className="home-tech-code">
+          <pre><code>{`// Attested axum service — full SGX chain in ~20 lines
 use guarantee::{attest, state};
 use axum::{response::Json, routing::get, Router};
 
@@ -103,7 +91,7 @@ state! {
     AppData,
 }
 
-// This is all you add — one attribute
+// One attribute. Every response gets X-TEE-Attestation.
 #[attest]
 async fn hello() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "message": "hello from TEE" }))
@@ -116,211 +104,112 @@ async fn main() {
         .route("/hello", get(hello))
         .layer(Extension(Arc::new(RwLock::new(state))));
 
-    // Every response now includes X-TEE-Attestation header
+    // curl response includes:
+    // X-TEE-Attestation: v=1; sig=...; hash=...; ts=...; key=...
     axum::serve(listener, app).await.unwrap();
-}`}</code>
-          </pre>
+}`}</code></pre>
         </div>
-      </section>
-
-      {/* ── How It Works ── */}
-      <SectionHeader title="Attestation Chain" label="03 // How It Works" />
-      <section style={{ marginBottom: "var(--space-xl)" }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            borderBottom: "var(--border-thin)",
-          }}
-        >
-          <StepCard num="01" title="Keypair Generated" text="Enclave boots and creates an ephemeral Ed25519 signing key. The private key exists only in enclave memory." />
-          <StepCard num="02" title="Startup Quote" text="SGX hardware produces a DCAP quote binding the public key to the enclave measurement (MRENCLAVE)." />
-          <StepCard num="03" title="Response Signed" text="The #[attest] macro signs SHA-256(body || ts || req_id) with the enclave key on every response." />
-          <StepCard num="04" title="Anyone Verifies" text="Fetch the startup quote once, then verify each response signature. Proof from silicon to JSON." last />
-        </div>
-      </section>
-
-      {/* ── API Surface ── */}
-      <SectionHeader title="API Surface" label="04 // Reference" />
-      <section style={{ marginBottom: "var(--space-xl)" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", borderBottom: "var(--border-thin)" }}>
-          <thead>
-            <tr>
-              <th className="mono" style={{ textAlign: "left", padding: "0.75rem var(--space-sm)", borderBottom: "var(--border-thin)", fontWeight: 400, color: "var(--grey-light)", fontSize: "0.72rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>Export</th>
-              <th className="mono" style={{ textAlign: "left", padding: "0.75rem var(--space-sm)", borderBottom: "var(--border-thin)", fontWeight: 400, color: "var(--grey-light)", fontSize: "0.72rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ["#[attest]", "Attribute macro — signs every response with the enclave key"],
-              ["state! { }", "Declares two-tier sealed state with auto-generated accessors"],
-              ["#[derive(Encrypted)]", "Generates encrypted struct variant with AES-256-GCM"],
-              ["EnclaveAttestor", "Core struct — keypair, startup quote, response signing"],
-              ["MrEnclave / MrSigner", "32-byte enclave identity value types"],
-              ["StartupQuote", "SGX DCAP quote binding key to enclave measurement"],
-              ["AttestationHeader", "Per-response signature — parse with from_header_value()"],
-              ["seal_to_file()", "Low-level sealing to disk (MRENCLAVE or MRSIGNER mode)"],
-              ["encrypt_field()", "AES-256-GCM field encryption with optional key versioning"],
-              ["derive_key()", "HKDF-SHA256 purpose-specific key derivation"],
-              ["serve_ra_tls()", "HTTPS server with attestation-embedded X.509 certificates"],
-            ].map(([exp, desc], i) => (
-              <tr key={i}>
-                <td className="mono" style={{ padding: "0.6rem var(--space-sm)", borderBottom: "1px solid var(--grey-rule)", fontWeight: 700, fontSize: "0.82rem", whiteSpace: "nowrap" }}>{exp}</td>
-                <td style={{ padding: "0.6rem var(--space-sm)", borderBottom: "1px solid var(--grey-rule)", fontSize: "0.88rem", color: "var(--grey)" }}>{desc}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      {/* ── Examples ── */}
-      <SectionHeader title="Examples" label="05 // Use Cases" />
-      <section style={{ marginBottom: "var(--space-xl)" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderBottom: "var(--border-thin)" }}>
-          <ExampleCard slug="hello-tee" tag="Starter" title="Hello TEE" desc="Minimal attested service — one handler, one macro, full attestation chain." />
-          <ExampleCard slug="oracle" tag="DeFi" title="Price Oracle" desc="Two-tier state with background price updates. Every price is cryptographically signed." />
-          <ExampleCard slug="btc-signer" tag="Custody" title="Bitcoin Signer" desc="Private key custody with MRSIGNER sealing. Key never leaves enclave memory." />
-          <ExampleCard slug="postgres-encrypted" tag="Database" title="Encrypted Postgres" desc="Field-level AES-256-GCM before INSERT. Database only ever sees ciphertext." />
-          <ExampleCard slug="redis-cache" tag="Cache" title="Encrypted Redis" desc="Conditional encryption for cache values. Sensitive data encrypted, rest stays queryable." />
-          <ExampleCard slug="ra-tls" tag="Transport" title="RA-TLS" desc="Remote attestation baked into TLS handshakes. Verify enclave identity at connection time." last />
-        </div>
-      </section>
-
-      {/* ── Config ── */}
-      <SectionHeader title="Configuration" label="06 // Environment" />
-      <section style={{ marginBottom: "var(--space-xl)" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderBottom: "var(--border-thin)" }}>
-          {[
-            ["GUARANTEE_ENCLAVE=1", "Enable enclave mode — reads /dev/attestation/* for real SGX quotes"],
-            ["(unset)", "Dev mode — mock attestation, same API, no hardware required"],
-            ["GUARANTEE_ATTEST_MODE", 'Set to "startup-only" to skip per-response signatures'],
-            ["PORT", "HTTP listen port (default 8080)"],
-          ].map(([k, v], i) => (
-            <div
-              key={i}
-              style={{
-                padding: "var(--space-sm) var(--space-md)",
-                borderRight: i % 2 === 0 ? "var(--border-thin)" : "none",
-                borderBottom: i < 2 ? "1px solid var(--grey-rule)" : "none",
-              }}
-            >
-              <div className="mono" style={{ fontWeight: 700, fontSize: "0.8rem", marginBottom: "0.25rem" }}>{k}</div>
-              <div style={{ fontSize: "0.85rem", color: "var(--grey)" }}>{v}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-    </main>
-  );
-}
-
-/* ── Sub-components ── */
-
-function SectionHeader({ title, label }: { title: string; label: string }) {
-  return (
-    <div
-      style={{
-        paddingBottom: "var(--space-sm)",
-        borderBottom: "var(--border-thin)",
-        marginBottom: 0,
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "baseline",
-      }}
-    >
-      <h3>{title}</h3>
-      <span className="mono">{label}</span>
-    </div>
-  );
-}
-
-function GridItem({ title, text, last }: { title: string; text: string; last?: boolean }) {
-  return (
-    <div style={{ padding: "var(--space-md)", borderRight: last ? "none" : "var(--border-thin)" }}>
-      <h3 className="mono" style={{ fontSize: "0.9rem", textTransform: "uppercase", letterSpacing: "0.02em" }}>
-        {title}
-      </h3>
-      <p style={{ fontSize: "0.9rem", lineHeight: 1.6 }}>{text}</p>
-    </div>
-  );
-}
-
-function InstallBox({ text }: { text: string }) {
-  return (
-    <div
-      className="mono"
-      style={{
-        border: "var(--border-thin)",
-        padding: "var(--space-sm)",
-        marginBottom: "var(--space-sm)",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-      }}
-    >
-      <span>{text}</span>
-      <span
-        style={{ cursor: "pointer", userSelect: "none", opacity: 0.5, transition: "opacity 0.15s" }}
-        onClick={() => navigator.clipboard.writeText(text.replace("$ ", ""))}
-      >
-        [COPY]
-      </span>
-    </div>
-  );
-}
-
-function StepCard({ num, title, text, last }: { num: string; title: string; text: string; last?: boolean }) {
-  return (
-    <div style={{ padding: "var(--space-md)", borderRight: last ? "none" : "var(--border-thin)" }}>
-      <div
-        style={{
-          fontFamily: "var(--font-display)",
-          fontSize: "2.5rem",
-          fontWeight: 700,
-          lineHeight: 1,
-          marginBottom: "var(--space-sm)",
-          opacity: 0.15,
-        }}
-      >
-        {num}
       </div>
-      <h4
-        style={{
-          fontFamily: "var(--font-display)",
-          fontSize: "0.85rem",
-          textTransform: "uppercase",
-          letterSpacing: "0.02em",
-          marginBottom: "0.5rem",
-        }}
-      >
-        {title}
-      </h4>
-      <p style={{ fontSize: "0.85rem", lineHeight: 1.55, color: "#444" }}>{text}</p>
-    </div>
-  );
-}
 
-function ExampleCard({ slug, tag, title, desc, last }: { slug: string; tag: string; title: string; desc: string; last?: boolean }) {
-  return (
-    <Link
-      to={`/docs/${slug}`}
-      style={{
-        padding: "var(--space-md)",
-        borderRight: last ? "none" : "var(--border-thin)",
-        display: "block",
-        transition: "background 0.15s",
-        borderBottom: "var(--border-thin)",
-      }}
-      onMouseOver={(e) => (e.currentTarget.style.background = "#f8f8f8")}
-      onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
-    >
-      <span className="mono" style={{ fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--grey-light)", marginBottom: "0.75rem", display: "block" }}>
-        {tag}
-      </span>
-      <h4 style={{ fontFamily: "var(--font-display)", fontSize: "1rem", textTransform: "uppercase", marginBottom: "0.5rem" }}>
-        {title}
-      </h4>
-      <p style={{ fontSize: "0.85rem", color: "var(--grey)", lineHeight: 1.5 }}>{desc}</p>
-    </Link>
+      {/* ── 03 How It Works ── */}
+      <div className="section-header">
+        <h3>Attestation Chain</h3>
+        <span className="mono">03 // How It Works</span>
+      </div>
+      <div className="home-steps">
+        {[
+          ["01", "Key Generation", "At startup, the SDK generates an ephemeral Ed25519 keypair entirely inside enclave memory. The private key is never serialised, never logged, and never leaves the enclave boundary."],
+          ["02", "DCAP Quote", "The SDK writes SHA-256(public_key) to /dev/attestation/user_report_data and reads back an Intel DCAP quote. The quote cryptographically binds MRENCLAVE + MRSIGNER to that specific key."],
+          ["03", "Response Signed", "#[attest] signs SHA-256(body ‖ timestamp_ms ‖ request_id) with the enclave key on every response. The signature and public key are attached as X-TEE-Attestation."],
+          ["04", "Independent Verification", "Any caller fetches /.well-known/tee-attestation once, verifies the DCAP quote against Intel hardware, then checks every response signature. No trust in GuaranTEE or the operator required."],
+        ].map(([num, title, text]) => (
+          <div className="home-step" key={num}>
+            <div className="home-step-num">{num}</div>
+            <h4>{title}</h4>
+            <p>{text}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── 04 API Surface ── */}
+      <div className="section-header">
+        <h3>API Surface</h3>
+        <span className="mono">04 // Reference</span>
+      </div>
+      <table className="home-api-table">
+        <thead>
+          <tr><th>Export</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          {[
+            ["#[attest]", "Attribute macro — signs every response with the enclave key"],
+            ["state! { }", "Declares two-tier sealed state with auto-generated accessors"],
+            ["#[derive(Encrypted)]", "Generates encrypted struct variant with AES-256-GCM"],
+            ["EnclaveAttestor", "Core struct — keypair, startup quote, response signing"],
+            ["MrEnclave / MrSigner", "32-byte enclave identity value types"],
+            ["StartupQuote", "SGX DCAP quote binding key to enclave measurement"],
+            ["AttestationHeader", "Per-response signature — parse with from_header_value()"],
+            ["seal_to_file()", "Low-level sealing to disk (MRENCLAVE or MRSIGNER mode)"],
+            ["encrypt_field()", "AES-256-GCM field encryption with optional key versioning"],
+            ["derive_key()", "HKDF-SHA256 purpose-specific key derivation"],
+            ["serve_ra_tls()", "HTTPS server with attestation-embedded X.509 certificates"],
+            ["gramine::write_user_report_data()", "Write 64 bytes to /dev/attestation/user_report_data"],
+            ["gramine::read_quote()", "Read the raw DCAP quote from /dev/attestation/quote"],
+            ["guarantee::connect()", "RA-TLS client — verifies remote enclave before connecting (feature: ra-tls)"],
+          ].map(([exp, desc], i) => (
+            <tr key={i}><td>{exp}</td><td>{desc}</td></tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* ── 05 Examples ── */}
+      <div className="section-header">
+        <h3>Examples</h3>
+        <span className="mono">05 // Use Cases</span>
+      </div>
+      <div className="home-examples">
+        {[
+          ["hello-tee", "Starter", "Hello TEE", "The minimum viable attested service. One handler, one #[attest], the full SGX attestation chain. Start here."],
+          ["oracle", "DeFi", "Price Oracle", "MRENCLAVE-scoped state with background price updates. Every price response is signed — consumers verify without calling a price feed contract."],
+          ["btc-signer", "Custody", "Bitcoin Signer", "MRSIGNER-sealed private key custody. The key survives binary updates but never leaves enclave memory. No HSM required."],
+          ["postgres-encrypted", "Database", "Encrypted Postgres", "AES-256-GCM field encryption before INSERT. The database stores only ciphertext. Keys are derived from the enclave master key and never written to disk in plaintext."],
+          ["redis-cache", "Cache", "Encrypted Redis", "Selective field encryption for cache values. Sensitive fields encrypted with per-key derivation. Queryable fields left in plaintext. Zero change to Redis configuration."],
+          ["ra-tls", "Transport", "RA-TLS", "Remote attestation embedded in TLS handshakes. The client verifies the enclave identity before the connection is established — attestation at the transport layer."],
+        ].map(([slug, tag, title, desc]) => (
+          <Link to={`/docs/${slug}`} className="home-example-card" key={slug}>
+            <span className="home-example-tag">{tag}</span>
+            <h4>{title}</h4>
+            <p>{desc}</p>
+          </Link>
+        ))}
+      </div>
+
+      {/* ── 06 Configuration ── */}
+      <div className="section-header">
+        <h3>Configuration</h3>
+        <span className="mono">06 // Environment</span>
+      </div>
+      <div className="home-config">
+        {[
+          ["GUARANTEE_ENCLAVE=1", "Enclave mode. Reads /dev/attestation/* for real SGX DCAP quotes. Requires Gramine. Unset for dev mode."],
+          ["(unset)", "Dev mode. Mock quote with 0xDE fill bytes. Same API surface, real Ed25519 signatures, no hardware required. Use in CI."],
+          ["GUARANTEE_ATTEST_MODE=startup-only", "Disables per-response signing. Startup quote still generated. Use when callers only need MRENCLAVE, not response provenance."],
+          ["PORT", "HTTP listen port. Defaults to 8080. Used by all examples."],
+        ].map(([k, v], i) => (
+          <div className="home-config-item" key={i}>
+            <div className="home-config-key">{k}</div>
+            <div className="home-config-val">{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Managed platform CTA ── */}
+      <div className="home-platform-cta">
+        <span>Want managed enclave deployment?</span>
+        <a href="https://guarantee.rs" target="_blank" rel="noopener noreferrer" className="mono">
+          guarantee.rs ↗
+        </a>
+      </div>
+    </main>
   );
 }

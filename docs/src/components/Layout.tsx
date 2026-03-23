@@ -1,82 +1,95 @@
+import { useEffect } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
+
+const PAGE_TITLES: Record<string, string> = {
+  "getting-started": "Getting Started — Rust SGX Attestation in 5 min | Guarantee SDK",
+  "how-it-works": "SGX Attestation Chain — DCAP, MRENCLAVE, Ed25519 | Guarantee SDK",
+  "attestation": "Attestation Types — MrEnclave, StartupQuote, DCAP | Guarantee SDK",
+  "state": "MRENCLAVE-Scoped State in Gramine Enclaves — state! macro | Guarantee SDK",
+  "encryption": "AES-256-GCM Field Encryption in SGX Enclaves | Guarantee SDK",
+  "sealing": "Enclave State Sealing — MRENCLAVE vs MRSIGNER | Guarantee SDK",
+  "attest-macro": "#[attest] Macro — Per-Response Ed25519 Signing | Guarantee SDK",
+  "state-macro": "state! Macro — Two-Tier Sealed State | Guarantee SDK",
+  "encrypted-derive": "#[derive(Encrypted)] — AES-256-GCM Field Encryption | Guarantee SDK",
+  "crypto": "Crypto Utilities — encrypt_field, derive_key, HKDF | Guarantee SDK",
+  "enclave-attestor": "EnclaveAttestor API — Keypair, Quote, Signing | Guarantee SDK",
+  "ra-tls": "RA-TLS for Rust — SGX Quote in TLS Certificate | Guarantee SDK",
+  "errors": "SdkError Reference — Error Handling | Guarantee SDK",
+  "hello-tee": "Hello TEE Example — Minimal Attested Service | Guarantee SDK",
+  "oracle": "Price Oracle Example — Attested DeFi Feed | Guarantee SDK",
+  "btc-signer": "Bitcoin Signer Example — SGX Key Custody | Guarantee SDK",
+  "postgres-encrypted": "Encrypted Postgres Example — Field-Level AES | Guarantee SDK",
+  "redis-cache": "Encrypted Redis Example — Selective Cache Encryption | Guarantee SDK",
+  "verify": "Verify SGX Attestation — X-TEE-Attestation Header Checker | Guarantee",
+};
 
 export function Layout() {
   const { pathname } = useLocation();
-  const isHome = pathname === "/";
+
+  // Scroll to top on route change
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+
+  // Page title
+  useEffect(() => {
+    if (pathname === "/") {
+      document.title = "Guarantee — Rust SGX Attestation SDK for Gramine Enclaves";
+    } else if (pathname === "/verify") {
+      document.title = PAGE_TITLES["verify"];
+    } else if (pathname.startsWith("/docs/")) {
+      const slug = pathname.replace("/docs/", "");
+      document.title = PAGE_TITLES[slug] || `${slug} | Guarantee SDK`;
+    }
+  }, [pathname]);
 
   return (
     <div className="container">
-      <header style={{ marginBottom: isHome ? "var(--space-xl)" : "var(--space-md)" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-end",
-            paddingBottom: "var(--space-xs)",
-            borderBottom: "var(--border-thick)",
-          }}
-        >
-          <Link
-            to="/"
-            style={{
-              fontFamily: "var(--font-display)",
-              fontSize: isHome ? "clamp(2.5rem, 7vw, 5.5rem)" : "3rem",
-              fontWeight: 700,
-              lineHeight: 1,
-              textTransform: "uppercase",
-              letterSpacing: "-0.02em",
-            }}
-          >
+      <header className="site-header">
+        <div className="header-top">
+          <Link to="/" className="logo-text">
             Guarantee
           </Link>
-          <nav className="mono" style={{ display: "flex", gap: "var(--space-md)", paddingBottom: "0.4rem" }}>
-            <Link to="/docs/getting-started" style={{ textDecoration: pathname.startsWith("/docs") ? "underline" : "none", textUnderlineOffset: "4px" }}>
-              Docs
+          <nav className="header-nav mono">
+            <Link to="/docs/getting-started" className={pathname.startsWith("/docs") ? "active" : ""}>
+              Documentation
             </Link>
-            <a href="https://github.com/susruth/guarantee" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
-            <a href="https://crates.io/crates/guarantee" target="_blank" rel="noopener noreferrer">Crates.io ↗</a>
+            <Link to="/verify" className={pathname === "/verify" ? "active" : ""}>
+              Verify
+            </Link>
+            <a href="https://github.com/susruth/guarantee" target="_blank" rel="noopener noreferrer">
+              GitHub ↗
+            </a>
+            <a href="https://crates.io/crates/guarantee" target="_blank" rel="noopener noreferrer">
+              Crates.io ↗
+            </a>
           </nav>
         </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "var(--space-xs) 0",
-            borderBottom: "var(--border-thin)",
-            fontSize: "0.78rem",
-            textTransform: "uppercase",
-            fontFamily: "var(--font-display)",
-            letterSpacing: "0.05em",
-          }}
-        >
-          <span>{pathname.startsWith("/docs") ? "API Reference // Documentation" : "Open Source Rust TEE Attestation SDK"}</span>
+        <div className="header-bottom">
+          <span>Open Source Rust TEE Attestation SDK</span>
           <span>v0.1.2</span>
         </div>
       </header>
 
       <Outlet />
 
-      <footer
-        className="mono"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "var(--space-md) 0",
-          borderTop: "var(--border-thick)",
-          fontSize: "0.78rem",
-          textTransform: "uppercase",
-          flexWrap: "wrap",
-          gap: "var(--space-sm)",
-        }}
-      >
+      <footer className="site-footer mono">
         <div>Guarantee SDK // 2025</div>
-        <div style={{ display: "flex", gap: "var(--space-md)" }}>
+        <div className="footer-links">
           <Link to="/docs/getting-started">Documentation</Link>
-          <a href="https://github.com/susruth/guarantee" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
-          <a href="https://crates.io/crates/guarantee" target="_blank" rel="noopener noreferrer">Crates.io ↗</a>
-          <a href="https://github.com/susruth/guarantee/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License ↗</a>
+          <Link to="/verify">Verify</Link>
+          <a href="https://github.com/susruth/guarantee" target="_blank" rel="noopener noreferrer">
+            GitHub ↗
+          </a>
+          <a href="https://crates.io/crates/guarantee" target="_blank" rel="noopener noreferrer">
+            Crates.io ↗
+          </a>
+          <a href="https://guarantee.rs" target="_blank" rel="noopener noreferrer">
+            guarantee.rs ↗
+          </a>
+          <a href="https://github.com/susruth/guarantee/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">
+            MIT License ↗
+          </a>
         </div>
       </footer>
     </div>
