@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vocs dev",
     "build": "vocs build",
-    "preview": "vocs preview"
+    "preview": "vocs preview",
+    "deploy": "vocs build && npx wrangler pages deploy docs/dist --project-name=guarantee-docs"
   },
   "devDependencies": {
     "@types/bun": "latest"

@@ -1,0 +1,154 @@
+# Key Rotation
+
+## Overview
+
+Guarantee supports automatic and manual rotation of the MRSIGNER master
+encryption key. When a key is rotated:
+
+1. The old key is appended to the `retired_keys` list in MRSIGNER state.
+2. All new encryptions use the new key version.
+3. All decryptions try the current key first, then fall back to retired keys.
+4. Retired keys may have an optional expiry date; expired keys are ignored.
+
+The signing key (used for `X-TEE-Attestation` headers) is ephemeral and
+regenerated on every enclave startup — it does not need rotation.
+
+---
+
+## Automatic Rotation
+
+The default rotation interval is 90 days. Call `check_rotation()` periodically
+(e.g., at startup or on a daily schedule) and Guarantee will rotate
+automatically when the interval has elapsed:
+
+```rust
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+let state = Arc::new(RwLock::new(
+    TeeState::initialize(std::path::Path::new("./sealed"))
+        .expect("init state"),
+));
+
+// At startup and on a schedule:
+{
+    let mut s = state.write().await;
+    if s.check_rotation()? {
+        tracing::info!("Master key rotated — re-encrypting data in background");
+        s.seal(std::path::Path::new("./sealed"))?;
+    }
+}
+```
+
+`check_rotation()` returns `true` if it performed a rotation, `false` if the
+current key is still within the rotation window.
+
+---
+
+## Manual Rotation
+
+Call `rotate_master_key()` to rotate immediately — for example after a
+suspected key compromise:
+
+```rust
+let mut state = state.write().await;
+state.rotate_master_key()?;
+state.seal(std::path::Path::new("./sealed"))?;
+
+tracing::warn!("Emergency key rotation complete");
+```
+
+---
+
+## Re-encrypting Existing Data
+
+After rotation, existing encrypted rows in your database are still readable
+(because the old key is in `retired_keys`). To re-encrypt them with the new
+key, run a background migration:
+
+```rust
+async fn reencrypt_users(
+    pool: &PgPool,
+    state: &TeeState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rows: Vec<UserRecordEncrypted> =
+        sqlx::query_as!( UserRecordEncrypted, "SELECT * FROM users")
+            .fetch_all(pool)
+            .await?;
+
+    for row in rows {
+        // decrypt with current or retired key, re-encrypt with current key
+        let user = state.decrypt_user_record(&row)?;
+        let new_enc = state.encrypt_user_record(&user)?;
+
+        sqlx::query!(
+            "UPDATE users SET email = $1, api_key = $2 WHERE user_id = $3",
+            new_enc.email,
+            new_enc.api_key,
+            new_enc.user_id,
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
+}
+```
+
+Once all rows are re-encrypted, retired keys with an `expires_at` date will be
+ignored and eventually purged.
+
+---
+
+## Versioned Encryption Format
+
+Every field encrypted after rotation includes the key version in its tag:
+
+```
+enc:v1:k1:<nonce>:<ciphertext>   ← encrypted with version 1
+enc:v1:k2:<nonce>:<ciphertext>   ← encrypted with version 2 (after rotation)
+```
+
+Old unversioned fields (`enc:v1:<nonce>:<ciphertext>`) produced by the legacy
+`encrypt_field` function are treated as version 0 and decrypted with the
+current key or the first matching retired key.
+
+---
+
+## Retired Key Lifecycle
+
+```
+Key v1 created
+    │
+    │  (90 days pass)
+    │
+    ▼
+Key v2 created
+Key v1 → retired_keys[0]
+    │
+    │  (re-encryption migration runs)
+    │  (optional: set retired_keys[0].expires_at)
+    │
+    ▼
+Key v1 expires → ignored by decrypt_field_versioned
+```
+
+A retired key with `expires_at` set to a past timestamp is skipped during
+decryption. Any row still encrypted with that key version becomes permanently
+unreadable. Use expiry dates to enforce data-deletion policies (e.g., GDPR
+right-to-erasure).
+
+```rust
+use guarantee::RetiredKeyEntry;
+
+// Example: expire a retired key 1 year after rotation
+let entry = RetiredKeyEntry {
+    version: 1,
+    key: old_key_bytes,
+    retired_at: "2026-01-01T00:00:00Z".to_string(),
+    expires_at: Some("2027-01-01T00:00:00Z".to_string()),
+};
+```
+
+Retired key entries are stored inside MRSIGNER-sealed state and never written to
+external storage in plaintext.

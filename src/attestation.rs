@@ -1,3 +1,10 @@
+//! Enclave attestation: startup quote generation and per-response signing.
+//!
+//! [`EnclaveAttestor`] is the central type for attestation. Initialize it once
+//! at startup and inject it into your axum router as an [`Extension`](axum::extract::Extension).
+//! The `#[attest]` macro retrieves it from the extension layer and calls
+//! [`sign_response`](EnclaveAttestor::sign_response) automatically.
+
 use std::sync::{Arc, RwLock};
 
 use base64::Engine;
@@ -13,27 +20,103 @@ use crate::gramine;
 use crate::response::{hex_encode, AttestationHeader};
 
 /// Controls whether per-response attestation signatures are produced.
+///
+/// Set via the `GUARANTEE_ATTEST_MODE` environment variable:
+///
+/// | Value | Mode |
+/// |-------|------|
+/// | *(unset or other)* | `EveryResponse` |
+/// | `startup-only` | `StartupOnly` |
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttestationMode {
-    /// Every HTTP response is signed with the enclave's ephemeral key.
+    /// Every HTTP response is signed with the enclave's ephemeral Ed25519 key.
+    ///
+    /// The resulting `X-TEE-Attestation` header allows callers to verify that
+    /// each response was produced by the attested enclave instance.
     EveryResponse,
+
     /// Only the startup quote is produced; per-response signatures are skipped.
+    ///
+    /// The `X-TEE-Attestation` header is still present but `sig` and `hash`
+    /// will be empty strings. Use this mode when per-response overhead matters
+    /// and callers only need startup-level assurance.
     StartupOnly,
 }
 
+/// The core attestation engine.
+///
+/// `EnclaveAttestor` holds an ephemeral Ed25519 signing keypair and the startup
+/// attestation quote. It is created once at startup via [`initialize`] and then
+/// shared across request handlers as an `Arc<EnclaveAttestor>`.
+///
+/// In enclave mode (`GUARANTEE_ENCLAVE=1`), initialization writes the public
+/// key hash to `/dev/attestation/user_report_data` and reads a real DCAP quote.
+/// In dev mode the quote is a mock struct with `0xDE` fill bytes.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use axum::{extract::Extension, routing::get, Router};
+/// use guarantee::{attest, EnclaveAttestor};
+///
+/// #[attest]
+/// async fn handler() -> axum::response::Json<serde_json::Value> {
+///     axum::response::Json(serde_json::json!({ "ok": true }))
+/// }
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let attestor = EnclaveAttestor::initialize().await.unwrap();
+///
+///     let app = Router::new()
+///         .route("/api", get(handler))
+///         .layer(Extension(attestor));
+///
+///     // every /api response will carry X-TEE-Attestation
+/// }
+/// ```
+///
+/// [`initialize`]: EnclaveAttestor::initialize
 pub struct EnclaveAttestor {
     signing_key: SigningKey,
+    /// The Ed25519 public key corresponding to the private signing key.
+    /// Clients use this to verify per-response signatures.
     pub public_key: VerifyingKey,
+    /// The startup attestation quote, populated during [`initialize`].
+    /// Served at `GET /.well-known/tee-attestation`.
+    ///
+    /// [`initialize`]: EnclaveAttestor::initialize
     pub startup_quote: Arc<RwLock<Option<StartupQuote>>>,
+    /// Whether to produce per-response signatures.
     pub mode: AttestationMode,
 }
 
 impl EnclaveAttestor {
+    /// Initialize the attestor using the attestation mode from the environment.
+    ///
+    /// Reads `GUARANTEE_ATTEST_MODE` to determine [`AttestationMode`] and then
+    /// delegates to [`initialize_with_mode`](Self::initialize_with_mode).
+    ///
+    /// In enclave mode, this call blocks briefly while the SGX quoting enclave
+    /// generates the DCAP quote. In dev mode it returns immediately.
     pub async fn initialize() -> Result<Arc<Self>, SdkError> {
         let mode = Self::detect_attestation_mode();
         Self::initialize_with_mode(mode).await
     }
 
+    /// Initialize the attestor with an explicit [`AttestationMode`].
+    ///
+    /// Useful in tests or when the attestation mode must be chosen
+    /// programmatically rather than via the environment.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use guarantee::{EnclaveAttestor, AttestationMode};
+    ///
+    /// let attestor = EnclaveAttestor::initialize_with_mode(AttestationMode::StartupOnly)
+    ///     .await?;
+    /// ```
     pub async fn initialize_with_mode(mode: AttestationMode) -> Result<Arc<Self>, SdkError> {
         tracing::info!(
             mode = if Self::is_enclave_mode() { "enclave" } else { "dev" },
@@ -113,6 +196,18 @@ impl EnclaveAttestor {
         }
     }
 
+    /// Sign a response body and produce an [`AttestationHeader`].
+    ///
+    /// Called automatically by handlers wrapped with `#[attest]`. The payload
+    /// hash is computed as:
+    ///
+    /// ```text
+    /// SHA-256(body || timestamp_ms_big_endian || request_id_utf8)
+    /// ```
+    ///
+    /// When [`AttestationMode::StartupOnly`] is active, the returned header has
+    /// empty `signature_b64` and `payload_hash_hex` fields but still includes
+    /// the public key hex so callers can identify the enclave instance.
     pub fn sign_response(&self, body: &[u8], request_id: &str) -> AttestationHeader {
         tracing::debug!(%request_id, body_len = body.len(), "Signing response");
         if self.mode == AttestationMode::StartupOnly {
@@ -144,6 +239,22 @@ impl EnclaveAttestor {
         }
     }
 
+    /// Produce the JSON body for `GET /.well-known/tee-attestation`.
+    ///
+    /// Returns a [`serde_json::Value`] with the following fields:
+    ///
+    /// | Field | Type | Description |
+    /// |-------|------|-------------|
+    /// | `public_key` | hex string | The enclave's ephemeral Ed25519 public key |
+    /// | `quote` | base64 string or null | Raw DCAP quote bytes |
+    /// | `mr_enclave` | hex string or null | Enclave code measurement |
+    /// | `mr_signer` | hex string or null | Signing key measurement |
+    /// | `tee_type` | string | `"intel-sgx"` or `"dev-mode"` |
+    /// | `produced_at` | RFC 3339 string or null | Quote generation timestamp |
+    ///
+    /// Returns [`SdkError::NotInitialized`] if called before [`initialize`].
+    ///
+    /// [`initialize`]: EnclaveAttestor::initialize
     pub fn startup_attestation_json(&self) -> Result<serde_json::Value, SdkError> {
         let quote_guard = self
             .startup_quote

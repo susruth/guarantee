@@ -1,8 +1,47 @@
 //! Field-level encryption for external storage.
 //!
-//! Provides AES-256-GCM encryption for individual fields and HKDF-SHA256
-//! key derivation for purpose-specific keys. Encrypted fields use the
-//! versioned format `enc:v1:<nonce_hex>:<ciphertext_hex>`.
+//! Provides AES-256-GCM encryption for individual struct fields and
+//! HKDF-SHA256 key derivation for purpose-specific sub-keys. Use this module
+//! when you need to store sensitive data in an external database or cache
+//! (PostgreSQL, Redis, etc.) and want the plaintext to never leave the enclave
+//! unencrypted.
+//!
+//! ## Encrypted field format
+//!
+//! Unversioned (legacy):
+//! ```text
+//! enc:v1:<nonce_hex>:<ciphertext_hex>
+//! ```
+//!
+//! Versioned (recommended):
+//! ```text
+//! enc:v1:k<version>:<nonce_hex>:<ciphertext_hex>
+//! ```
+//!
+//! Each call to [`encrypt_field`] or [`encrypt_field_versioned`] generates a
+//! fresh 12-byte random nonce, so encrypting the same plaintext twice always
+//! produces different ciphertexts.
+//!
+//! ## Usage with `#[derive(Encrypted)]`
+//!
+//! The easiest way to encrypt structs is via the `Encrypted` derive macro
+//! provided by the `guarantee-macros` crate:
+//!
+//! ```rust,ignore
+//! use guarantee::Encrypted;
+//!
+//! #[derive(Encrypted, serde::Serialize, serde::Deserialize)]
+//! struct UserRecord {
+//!     pub id: String,
+//!     #[encrypt]
+//!     pub email: String,
+//!     #[encrypt]
+//!     pub api_key: String,
+//! }
+//! ```
+//!
+//! The macro generates a `UserRecordEncrypted` type and implements
+//! [`Encryptable`] for `UserRecord`.
 
 use crate::errors::SdkError;
 use aes_gcm::aead::Aead;
@@ -12,22 +51,54 @@ use serde::{Deserialize, Serialize};
 
 const ENC_PREFIX: &str = "enc:v1:";
 
-/// Trait for types that support field-level encryption.
+/// Implemented by types that support field-level AES-256-GCM encryption.
 ///
-/// Implemented by the `#[derive(Encrypted)]` macro. Fields annotated with
-/// `#[encrypt]` are encrypted with AES-256-GCM; other fields are copied as-is.
+/// Typically derived automatically with `#[derive(Encrypted)]`. Fields
+/// annotated with `#[encrypt]` are encrypted; all other fields are copied
+/// as-is into the generated `*Encrypted` type.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use guarantee::{Encryptable, Encrypted};
+///
+/// #[derive(Encrypted, serde::Serialize, serde::Deserialize)]
+/// struct Secret {
+///     pub id: u64,
+///     #[encrypt]
+///     pub token: String,
+/// }
+///
+/// let secret = Secret { id: 1, token: "super-secret".into() };
+/// let key = [0u8; 32]; // use a real key in production
+///
+/// let encrypted = secret.encrypt(&key)?;
+/// let recovered = Secret::decrypt_from(&encrypted, &key)?;
+/// assert_eq!(recovered.token, "super-secret");
+/// ```
 pub trait Encryptable: Sized {
-    /// The encrypted form of this type.
+    /// The generated encrypted form of this type (e.g., `SecretEncrypted`).
     type Encrypted;
 
     /// Encrypt all `#[encrypt]`-annotated fields using the given 256-bit key.
+    ///
+    /// Non-annotated fields are copied verbatim into the `Encrypted` variant.
     fn encrypt(&self, key: &[u8; 32]) -> Result<Self::Encrypted, SdkError>;
 
     /// Decrypt all `#[encrypt]`-annotated fields and reconstruct the original type.
+    ///
+    /// Returns an error if any field cannot be decrypted (wrong key, corrupted
+    /// ciphertext, or malformed `enc:v1:...` payload).
     fn decrypt_from(encrypted: &Self::Encrypted, key: &[u8; 32]) -> Result<Self, SdkError>;
 
     /// Encrypt with versioned key tagging and per-type key derivation.
-    /// The `purpose` is used to derive a per-type key via HKDF.
+    ///
+    /// The `purpose` byte slice is used to derive a per-type sub-key via
+    /// [`derive_key`]. Using a different `purpose` per struct type ensures
+    /// that a key leaked for one type cannot be used to decrypt another.
+    /// The `version` is embedded in the ciphertext tag so that
+    /// [`decrypt_versioned`](Self::decrypt_versioned) can select the correct
+    /// retired key after rotation.
     fn encrypt_versioned(
         &self,
         key: &[u8; 32],
@@ -35,7 +106,13 @@ pub trait Encryptable: Sized {
         purpose: &[u8],
     ) -> Result<Self::Encrypted, SdkError>;
 
-    /// Decrypt with key version fallback. Handles both old and new encryption formats.
+    /// Decrypt with key version fallback.
+    ///
+    /// Handles both the old unversioned format (`enc:v1:<nonce>:<ct>`) and the
+    /// new versioned format (`enc:v1:k<N>:<nonce>:<ct>`). For the versioned
+    /// format, looks up the master key by version in `current_key` (if version
+    /// matches `current_version`) or `retired_keys`, then derives the per-type
+    /// sub-key with [`derive_key`] before decrypting.
     fn decrypt_versioned(
         encrypted: &Self::Encrypted,
         current_key: &[u8; 32],
@@ -46,22 +123,65 @@ pub trait Encryptable: Sized {
 }
 
 /// A retired encryption key entry, kept for backward decryption after key rotation.
+///
+/// When a master key is rotated, the old key is moved into the retired keys list
+/// so that data encrypted with the old key can still be decrypted. The
+/// `expires_at` field controls when the retired key is purged; after expiry,
+/// data encrypted with that key can no longer be decrypted.
+///
+/// Retired key entries are stored in sealed storage (MRSIGNER scope) so they
+/// are available across enclave redeployments but never leave the enclave
+/// unencrypted.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use guarantee::RetiredKeyEntry;
+///
+/// let entry = RetiredKeyEntry {
+///     version: 1,
+///     key: old_master_key,
+///     retired_at: "2026-01-01T00:00:00Z".to_string(),
+///     expires_at: Some("2027-01-01T00:00:00Z".to_string()),
+/// };
+/// ```
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RetiredKeyEntry {
-    /// The key version number.
+    /// The key version number that was active when this key was in use.
     pub version: u32,
-    /// The 256-bit key material.
+    /// The 256-bit AES master key material.
     pub key: [u8; 32],
-    /// RFC3339 timestamp of when the key was retired.
+    /// RFC 3339 timestamp of when this key was retired.
     pub retired_at: String,
-    /// Optional RFC3339 timestamp of when the retired key expires (after which it is purged).
+    /// Optional RFC 3339 timestamp after which this retired key may be purged.
+    ///
+    /// Once a key expires, any data that was encrypted with it becomes
+    /// permanently unreadable. Set this to enforce data-deletion policies.
     pub expires_at: Option<String>,
 }
 
 /// Encrypt a string field using AES-256-GCM.
 ///
-/// Returns `"enc:v1:<nonce_hex>:<ciphertext_hex>"`.
-/// Each call generates a unique 12-byte random nonce.
+/// Returns a string in the format `"enc:v1:<nonce_hex>:<ciphertext_hex>"`.
+/// A fresh 12-byte random nonce is generated on every call, so encrypting the
+/// same plaintext twice produces different ciphertexts.
+///
+/// This function uses the key directly without any additional derivation. For
+/// new code, prefer [`encrypt_field_versioned`] which adds key version tracking
+/// and per-type derivation.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use guarantee::crypto::{encrypt_field, decrypt_field};
+///
+/// let key = [42u8; 32];
+/// let encrypted = encrypt_field("my secret", &key)?;
+/// assert!(encrypted.starts_with("enc:v1:"));
+///
+/// let plaintext = decrypt_field(&encrypted, &key)?;
+/// assert_eq!(plaintext, "my secret");
+/// ```
 pub fn encrypt_field(plaintext: &str, key: &[u8; 32]) -> Result<String, SdkError> {
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| SdkError::CryptoError(format!("AES init: {e}")))?;
@@ -80,7 +200,22 @@ pub fn encrypt_field(plaintext: &str, key: &[u8; 32]) -> Result<String, SdkError
     Ok(format!("{ENC_PREFIX}{nonce_hex}:{ct_hex}"))
 }
 
-/// Decrypt a field. Input must be `"enc:v1:<nonce_hex>:<ciphertext_hex>"`.
+/// Decrypt a field that was encrypted with [`encrypt_field`].
+///
+/// The input must be in the format `"enc:v1:<nonce_hex>:<ciphertext_hex>"`.
+/// Returns [`SdkError::CryptoError`] if the prefix is missing, the format is
+/// invalid, the key is wrong, or the ciphertext is corrupted.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use guarantee::crypto::{encrypt_field, decrypt_field};
+///
+/// let key = [42u8; 32];
+/// let enc = encrypt_field("hello", &key)?;
+/// let dec = decrypt_field(&enc, &key)?;
+/// assert_eq!(dec, "hello");
+/// ```
 pub fn decrypt_field(encrypted: &str, key: &[u8; 32]) -> Result<String, SdkError> {
     let stripped = encrypted
         .strip_prefix(ENC_PREFIX)
@@ -114,7 +249,20 @@ pub fn decrypt_field(encrypted: &str, key: &[u8; 32]) -> Result<String, SdkError
 /// Derive a purpose-specific 256-bit key from a master key using HKDF-SHA256.
 ///
 /// The same `(master_key, purpose)` pair always produces the same derived key.
-/// Different purposes produce different keys.
+/// Different `purpose` values produce cryptographically independent keys, so a
+/// compromise of one derived key does not expose others.
+///
+/// Use a stable, human-readable byte string as the purpose — typically the
+/// struct or field name:
+///
+/// ```rust,ignore
+/// use guarantee::crypto::derive_key;
+///
+/// let master = [0u8; 32]; // loaded from sealed storage
+/// let email_key = derive_key(&master, b"UserRecord::email");
+/// let token_key = derive_key(&master, b"UserRecord::token");
+/// // email_key != token_key
+/// ```
 pub fn derive_key(master_key: &[u8; 32], purpose: &[u8]) -> [u8; 32] {
     use hkdf::Hkdf;
     use sha2::Sha256;
@@ -130,8 +278,25 @@ pub fn derive_key(master_key: &[u8; 32], purpose: &[u8]) -> [u8; 32] {
 
 /// Encrypt a string field using AES-256-GCM with a versioned key tag.
 ///
-/// Returns `"enc:v1:k<version>:<nonce_hex>:<ciphertext_hex>"`.
-/// The key is first derived via `derive_key(master_key, purpose)` before encryption.
+/// Returns a string in the format `"enc:v1:k<version>:<nonce_hex>:<ciphertext_hex>"`.
+/// The key is first derived via [`derive_key`]`(master_key, purpose)` before
+/// encryption, providing per-type key isolation.
+///
+/// The embedded `k<version>` tag allows [`decrypt_field_versioned`] to
+/// locate the correct key after a rotation event.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use guarantee::crypto::{encrypt_field_versioned, decrypt_field_versioned};
+///
+/// let master = [42u8; 32];
+/// let enc = encrypt_field_versioned("secret", &master, 1, b"UserRecord::email")?;
+/// assert!(enc.starts_with("enc:v1:k1:"));
+///
+/// let plain = decrypt_field_versioned(&enc, &master, 1, &[], b"UserRecord::email")?;
+/// assert_eq!(plain, "secret");
+/// ```
 pub fn encrypt_field_versioned(
     plaintext: &str,
     key: &[u8; 32],
@@ -157,15 +322,48 @@ pub fn encrypt_field_versioned(
     Ok(format!("{ENC_PREFIX}k{version}:{nonce_hex}:{ct_hex}"))
 }
 
-/// Decrypt a field with key version fallback. Handles both formats:
-/// - Old: `"enc:v1:<nonce_hex>:<ciphertext_hex>"` (treated as version 0, uses key directly)
-/// - New: `"enc:v1:k<N>:<nonce_hex>:<ciphertext_hex>"` (derives key from purpose)
+/// Decrypt a field with key version fallback.
 ///
-/// For the old unversioned format, `current_key` is used directly (no derivation),
-/// preserving backward compatibility with data encrypted by `encrypt_field`.
+/// Handles both encryption formats produced by this crate:
 ///
-/// For the versioned format, the appropriate master key is located (current or retired),
-/// then derived via `derive_key(master, purpose)` before decryption.
+/// - **Old unversioned** (`"enc:v1:<nonce>:<ct>"`): treated as version 0.
+///   `current_key` is tried first, then each entry in `retired_keys`.
+///   No key derivation is applied (the key was already derived before being
+///   passed to the old `encrypt_field`).
+///
+/// - **New versioned** (`"enc:v1:k<N>:<nonce>:<ct>"`): the version `N` is
+///   extracted, the matching master key is located (from `current_key` if
+///   `N == current_version`, otherwise from `retired_keys`), and the per-type
+///   sub-key is derived via [`derive_key`]`(master, purpose)` before decrypting.
+///
+/// Returns [`SdkError::CryptoError`] if:
+/// - The ciphertext format is invalid
+/// - The key version `N` is not found in `current_version` or `retired_keys`
+/// - Decryption fails (wrong key, corrupted ciphertext)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use guarantee::crypto::{encrypt_field_versioned, decrypt_field_versioned, RetiredKeyEntry};
+///
+/// let old_key = [1u8; 32];
+/// let new_key = [2u8; 32];
+///
+/// // Data was encrypted with the old key at version 1
+/// let enc = encrypt_field_versioned("hello", &old_key, 1, b"purpose")?;
+///
+/// // After rotation, old_key is now a retired key
+/// let retired = vec![RetiredKeyEntry {
+///     version: 1,
+///     key: old_key,
+///     retired_at: "2026-01-01T00:00:00Z".to_string(),
+///     expires_at: None,
+/// }];
+///
+/// // Decryption succeeds by falling back to the retired key
+/// let plain = decrypt_field_versioned(&enc, &new_key, 2, &retired, b"purpose")?;
+/// assert_eq!(plain, "hello");
+/// ```
 pub fn decrypt_field_versioned(
     encrypted: &str,
     current_key: &[u8; 32],
