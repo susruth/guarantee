@@ -1,0 +1,205 @@
+# Price Oracle
+
+An attested price feed oracle. Every price response is signed by the enclave, proving the price came from trusted code — not a manipulated intermediary.
+
+## What this demonstrates
+
+- Two-tier state: `#[mrenclave]` (cache) + `#[mrsigner]` (config)
+- Background tasks with shared TEE state
+- Read-only and mutable state access patterns
+- State persistence with `seal()`
+
+## Full source
+
+```rust
+use axum::{
+    extract::{Extension, Path},
+    response::Json,
+    routing::get,
+    Router,
+};
+use guarantee::{attest, state};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+// Cached prices — reset on redeploy (MRENCLAVE-bound).
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct PriceCache {
+    prices: HashMap<String, f64>,
+    last_updated: Option<String>,
+}
+
+// Oracle configuration — persists across redeploys (MRSIGNER-bound).
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct OracleConfig {
+    source_api_key: String,
+    max_staleness_secs: u64,
+}
+
+state! {
+    #[mrenclave]
+    PriceCache,
+
+    #[mrsigner]
+    OracleConfig,
+}
+
+#[attest]
+async fn get_price(
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
+    Path(symbol): Path<String>,
+) -> Json<serde_json::Value> {
+    let state = state.read().await;
+    let symbol_upper = symbol.to_uppercase();
+
+    let price = state
+        .enclave()
+        .price_cache()
+        .prices
+        .get(&symbol_upper)
+        .copied();
+
+    match price {
+        Some(p) => Json(serde_json::json!({
+            "symbol": symbol_upper,
+            "price": p,
+            "currency": "USD",
+            "source": "tee-oracle",
+            "last_updated": state.enclave().price_cache().last_updated,
+        })),
+        None => Json(serde_json::json!({
+            "error": "unknown_symbol",
+            "message": format!("No price available for {symbol_upper}"),
+        })),
+    }
+}
+
+#[attest]
+async fn get_all_prices(
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
+) -> Json<serde_json::Value> {
+    let state = state.read().await;
+    let cache = state.enclave().price_cache();
+    Json(serde_json::json!({
+        "prices": cache.prices,
+        "last_updated": cache.last_updated,
+    }))
+}
+
+async fn attestation_info(
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
+) -> Json<serde_json::Value> {
+    let state = state.read().await;
+    Json(state.attestation_json())
+}
+
+async fn update_prices(state: Arc<RwLock<TeeState>>) {
+    loop {
+        {
+            let mut s = state.write().await;
+            let cache = &mut s.enclave_mut().price_cache;
+            cache.prices.insert("BTC".into(), 67_432.50);
+            cache.prices.insert("ETH".into(), 3_521.75);
+            cache.prices.insert("SOL".into(), 142.30);
+            cache.prices.insert("AVAX".into(), 35.80);
+            cache.last_updated = Some(chrono::Utc::now().to_rfc3339());
+
+            let _ = s.seal(std::path::Path::new("./sealed"));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let state = TeeState::initialize(std::path::Path::new("./sealed"))
+        .expect("Failed to initialize TeeState");
+    let state = Arc::new(RwLock::new(state));
+
+    tokio::spawn(update_prices(state.clone()));
+
+    let app = Router::new()
+        .route("/price/:symbol", get(get_price))
+        .route("/prices", get(get_all_prices))
+        .route("/.well-known/tee-attestation", get(attestation_info))
+        .layer(Extension(state));
+
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+        .await
+        .expect("Failed to bind");
+    axum::serve(listener, app).await.expect("Server failed");
+}
+```
+
+## Run it
+
+```bash
+cargo run --example oracle
+```
+
+## Try it
+
+```bash
+# Get an attested BTC price
+curl http://localhost:8080/price/BTC | jq
+```
+
+```json
+{
+  "symbol": "BTC",
+  "price": 67432.5,
+  "currency": "USD",
+  "source": "tee-oracle",
+  "last_updated": "2024-03-23T12:34:56Z"
+}
+```
+
+```bash
+# Get all prices
+curl http://localhost:8080/prices | jq
+
+# Verify attestation
+curl http://localhost:8080/.well-known/tee-attestation | jq
+```
+
+## Key patterns
+
+### Two-tier state
+
+```rust
+state! {
+    #[mrenclave]
+    PriceCache,      // Resets on redeploy — fresh cache every time
+
+    #[mrsigner]
+    OracleConfig,    // Persists — API keys survive redeployments
+}
+```
+
+The price cache is ephemeral (MRENCLAVE) because stale prices shouldn't carry over to a new deployment. The oracle config is persistent (MRSIGNER) because API keys should survive redeployments.
+
+### Background tasks
+
+```rust
+let state = Arc::new(RwLock::new(state));
+tokio::spawn(update_prices(state.clone()));
+```
+
+The `TeeState` wrapped in `Arc<RwLock<_>>` is shared between the axum handlers and the background price updater. The updater acquires a write lock to update prices, then releases it.
+
+### Read vs write access
+
+```rust
+// Read-only (handlers that just read state)
+let s = state.read().await;
+let cache = s.enclave().price_cache();
+
+// Mutable (background updater that modifies state)
+let mut s = state.write().await;
+s.enclave_mut().price_cache.prices.insert("BTC".into(), 67_432.50);
+```
+
+Use `enclave()` / `signer()` for read-only access, `enclave_mut()` / `signer_mut()` for mutations.

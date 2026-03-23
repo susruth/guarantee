@@ -6,6 +6,7 @@ use axum::{extract::Extension, response::Json, routing::get, Router};
 use guarantee::{attest, state};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 struct AppData {
@@ -23,9 +24,10 @@ async fn hello() -> Json<serde_json::Value> {
 }
 
 async fn attestation_info(
-    Extension(state): Extension<Arc<TeeState>>,
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
 ) -> Json<serde_json::Value> {
-    Json(state.attestation_json())
+    let s = state.read().await;
+    Json(s.attestation_json())
 }
 
 #[tokio::main]
@@ -39,7 +41,7 @@ async fn main() {
     let app = Router::new()
         .route("/hello", get(hello))
         .route("/.well-known/tee-attestation", get(attestation_info))
-        .layer(Extension(Arc::new(state)));
+        .layer(Extension(Arc::new(RwLock::new(state))));
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
         .await

@@ -1,0 +1,166 @@
+# State Management
+
+The `state!` macro provides a unified, two-tier state system with automatic persistence via enclave sealing. State is divided by its lifetime and security properties.
+
+## The two tiers
+
+### MRENCLAVE state — ephemeral per deployment
+
+State declared under `#[mrenclave]` is sealed with the enclave's binary measurement. When you redeploy (changing the binary), this state is **reset** because the measurement changes.
+
+Use for: session data, caches, counters, temporary state.
+
+```rust
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct SessionData {
+    requests_this_session: u64,
+    last_request_time: Option<String>,
+}
+
+state! {
+    #[mrenclave]
+    SessionData,
+}
+```
+
+### MRSIGNER state — persistent across deployments
+
+State declared under `#[mrsigner]` is sealed with the signer key hash. As long as you sign enclaves with the same key, this state **persists** across redeploys.
+
+Use for: private keys, master encryption keys, long-lived configuration.
+
+```rust
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct WalletKeys {
+    private_key: [u8; 32],
+    derivation_path: String,
+}
+
+state! {
+    #[mrsigner]
+    WalletKeys,
+}
+```
+
+### External state — encrypted for external storage
+
+Types declared under `#[external]` generate encryption/decryption methods on `TeeState`. Use these to encrypt data before storing it in databases, caches, or any external system.
+
+```rust
+#[derive(Encrypted, Serialize, Deserialize, Clone, Debug)]
+struct UserRecord {
+    user_id: String,
+    #[encrypt]
+    ssn: String,        // This field gets encrypted
+    email: String,      // This stays plaintext
+}
+
+state! {
+    #[external]
+    UserRecord,
+}
+
+// Generated methods:
+// state.encrypt_user_record(&record) -> Result<EncryptedUserRecord, SdkError>
+// state.decrypt_user_record(&encrypted) -> Result<UserRecord, SdkError>
+```
+
+## Combining tiers
+
+A single `state!` declaration can use all three tiers:
+
+```rust
+state! {
+    #[mrenclave]
+    SessionData,
+    PriceCache,
+
+    #[mrsigner]
+    WalletKeys,
+    OracleConfig,
+
+    #[external]
+    AuditEntry,
+    UserRecord,
+}
+```
+
+This generates a single `TeeState` struct with:
+- `state.enclave()` / `state.enclave_mut()` — access MRENCLAVE fields
+- `state.signer()` / `state.signer_mut()` — access MRSIGNER fields
+- `state.encrypt_*()` / `state.decrypt_*()` — encrypt/decrypt external types
+
+## Generated `TeeState` API
+
+### Initialization
+
+```rust
+let state = TeeState::initialize(std::path::Path::new("./sealed"))?;
+```
+
+Loads existing sealed state from disk, or creates new default state if no sealed file exists.
+
+### Persistence
+
+```rust
+state.seal(std::path::Path::new("./sealed"))?;
+```
+
+Seals both MRENCLAVE and MRSIGNER state to separate files in the given directory.
+
+### Attestation (requires `#[mrenclave]`)
+
+```rust
+// Sign a response body
+let header = state.sign_response(body_bytes, request_id);
+
+// Get the public key
+let pubkey = state.public_key();
+
+// JSON for /.well-known/tee-attestation
+let json = state.attestation_json();
+```
+
+### Key rotation (requires `#[mrsigner]`)
+
+```rust
+// Check if rotation is needed (default: every 90 days)
+if state.check_rotation()? {
+    println!("Master key was rotated");
+}
+
+// Force rotation
+state.rotate_master_key()?;
+```
+
+Retired keys are kept so existing encrypted data can still be decrypted. The `decrypt_*` methods automatically try retired keys when the current key fails.
+
+## Typical usage pattern
+
+```rust
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+#[tokio::main]
+async fn main() {
+    let state = TeeState::initialize(std::path::Path::new("./sealed"))
+        .expect("Failed to initialize");
+
+    let state = Arc::new(RwLock::new(state));
+
+    let app = Router::new()
+        .route("/api", get(handler))
+        .layer(Extension(state));
+
+    // ...
+}
+
+#[attest]
+async fn handler(
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
+) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    // Access state...
+    Json(serde_json::json!({"data": "value"}))
+}
+```

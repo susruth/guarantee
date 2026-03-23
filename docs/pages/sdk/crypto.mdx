@@ -1,0 +1,114 @@
+# Crypto Utilities
+
+Low-level cryptographic functions for field encryption, key derivation, and key rotation.
+
+## `encrypt_field` / `decrypt_field`
+
+Basic field encryption with AES-256-GCM:
+
+```rust
+use guarantee::crypto::{encrypt_field, decrypt_field};
+
+let key: [u8; 32] = [/* 32 bytes */];
+
+let ciphertext = encrypt_field("my secret", &key)?;
+// → "enc:v1:<nonce_hex>:<ciphertext_hex>"
+
+let plaintext = decrypt_field(&ciphertext, &key)?;
+// → "my secret"
+```
+
+## Versioned encryption
+
+For key rotation support. Includes the key version in the ciphertext so the correct key can be selected during decryption:
+
+```rust
+use guarantee::crypto::{encrypt_field_versioned, decrypt_field_versioned, RetiredKeyEntry};
+
+let key: [u8; 32] = [/* current key */];
+let version: u32 = 2;
+
+let ciphertext = encrypt_field_versioned("secret", &key, version, b"purpose")?;
+// → "enc:v1:k2:<nonce_hex>:<ciphertext_hex>"
+
+// Decryption with retired key fallback
+let retired = vec![
+    RetiredKeyEntry {
+        version: 1,
+        key: old_key,
+        retired_at: "2024-01-01T00:00:00Z".into(),
+        expires_at: None,
+    },
+];
+
+let plaintext = decrypt_field_versioned(
+    &ciphertext,
+    &key,
+    version,
+    &retired,
+    b"purpose",
+)?;
+```
+
+## `derive_key`
+
+HKDF-SHA256 key derivation from a master key:
+
+```rust
+use guarantee::crypto::derive_key;
+
+let master: [u8; 32] = [/* master key */];
+
+let user_key = derive_key(&master, b"user-records");
+let audit_key = derive_key(&master, b"audit-log");
+
+// Different purposes → different keys
+assert_ne!(user_key, audit_key);
+```
+
+## `Encryptable` trait
+
+The trait implemented by `#[derive(Encrypted)]`:
+
+```rust
+pub trait Encryptable: Sized {
+    type Encrypted;
+
+    fn encrypt(&self, key: &[u8; 32]) -> Result<Self::Encrypted, SdkError>;
+
+    fn decrypt_from(
+        encrypted: &Self::Encrypted,
+        key: &[u8; 32],
+    ) -> Result<Self, SdkError>;
+
+    fn encrypt_versioned(
+        &self,
+        key: &[u8; 32],
+        version: u32,
+        purpose: &[u8],
+    ) -> Result<Self::Encrypted, SdkError>;
+
+    fn decrypt_versioned(
+        encrypted: &Self::Encrypted,
+        current_key: &[u8; 32],
+        current_version: u32,
+        retired_keys: &[RetiredKeyEntry],
+        purpose: &[u8],
+    ) -> Result<Self, SdkError>;
+}
+```
+
+## `RetiredKeyEntry`
+
+Metadata for a retired encryption key:
+
+```rust
+pub struct RetiredKeyEntry {
+    pub version: u32,                  // Key version number
+    pub key: [u8; 32],                // The retired key bytes
+    pub retired_at: String,            // RFC3339 timestamp
+    pub expires_at: Option<String>,    // Optional expiry (RFC3339)
+}
+```
+
+Retired keys are stored in MRSIGNER state and automatically used as fallbacks during decryption.

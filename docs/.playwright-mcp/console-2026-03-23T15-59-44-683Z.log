@@ -1,0 +1,80 @@
+[    9026ms] [ERROR] In HTML, %s cannot be a descendant of <%s>.
+This will cause a hydration error.%s <p> p 
+
+  ...
+    <RenderedRoute match={{params:{}, ...}} routeContext={{outlet:null, ...}}>
+      <Root content={"---\nlay..."} filePath="index.mdx" frontmatter={{layout:"la..."}} lastUpdatedAt={undefined} ...>
+        <Head>
+        <ScrollRestoration>
+        <MDXProvider components={{...}}>
+          <Layout frontmatter={{layout:"la..."}} path="/">
+            <DocsLayout>
+              <div className="vocs_DocsL..." data-layout="landing" style={{...}}>
+                <SkipLink>
+                <div>
+                <div>
+                <div id="vocs-content" className="vocs_DocsL..." style={{}}>
+                  <Content>
+                    <article className="vocs_Content">
+                      <MDXContent>
+                        <div className="landing-hero">
+                          <div>
+                          <div>
+                          <div className="hero-content">
+                            <div>
+                            <h1>
+>                           <p className="hero-description">
+                              <Paragraph>
+>                               <p className="vocs_Paragraph">
+                            ...
+                        ...
+                  ...
+                ...
+ @ http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:2155
+[    9026ms] [ERROR] <%s> cannot contain a nested %s.
+See this log for the ancestor stack trace. p <p> @ http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:2162
+[    9062ms] Error: Hydration failed because the server rendered text didn't match the client. As a result this tree will be regenerated on the client. This can happen if a SSR-ed Client Component used:
+
+- A server/client branch `if (typeof window !== 'undefined')`.
+- Variable input such as `Date.now()` or `Math.random()` which changes each time it's called.
+- Date formatting in a user's locale which doesn't match the server.
+- External changing data without sending a snapshot of it along with the HTML.
+- Invalid HTML tag nesting.
+
+It can also happen if the client has a browser extension installed which messes with the HTML before React loaded.
+
+https://react.dev/link/hydration-mismatch
+
+  ...
+    <RenderErrorBoundary location={{pathname:"/", ...}} revalidation="idle" component={<DefaultErrorComponent>} ...>
+      <RenderedRoute match={{params:{}, ...}} routeContext={{outlet:null, ...}}>
+        <Root content={"---\nlay..."} filePath="index.mdx" frontmatter={{layout:"la..."}} lastUpdatedAt={undefined} ...>
+          <Head>
+          <ScrollRestoration>
+          <MDXProvider components={{...}}>
+            <Layout frontmatter={{layout:"la..."}} path="/">
+              <DocsLayout>
+                <div className="vocs_DocsL..." data-layout="landing" style={{...}}>
+                  <SkipLink>
+                  <div>
+                  <div className="vocs_DocsL...">
+                    <Curtain>
+                    <Curtain enableScrollToTop={false}>
+                      <div className="vocs_Mobil...">
+                        <div className="vocs_Mobil...">
+                          <div className="vocs_MobileTopNav_curtainItem">
++                           Cryptographic proofyour code runs in a TEE.
+-                           
+                        ...
+                  ...
+
+    at throwOnHydrationMismatch (http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:3920:13)
+    at prepareToHydrateHostInstance (http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:3994:23)
+    at completeWork (http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:8999:17)
+    at runWithFiberInDEV (http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:997:72)
+    at completeUnitOfWork (http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:12669:22)
+    at performUnitOfWork (http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:12575:29)
+    at workLoopSync (http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:12424:43)
+    at renderRootSync (http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:12408:13)
+    at performWorkOnRoot (http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:11766:189)
+    at performWorkOnRootViaSchedulerTask (http://localhost:4172/@fs/Users/susruth/Documents/Claude/Projects/Guarantee/guarantee/docs/node_modules/vocs/node_modules/.vite/deps/react-dom_client.js?v=418144e4:13505:9)

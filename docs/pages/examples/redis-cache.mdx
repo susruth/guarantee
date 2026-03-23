@@ -1,0 +1,266 @@
+# Encrypted Redis Cache
+
+Use a TEE enclave with Redis as an encrypted cache layer. Sensitive values are encrypted before being stored in Redis — even if Redis is compromised, the data is unreadable without the enclave's master key.
+
+## What this demonstrates
+
+- Conditional encryption (sensitive vs non-sensitive values)
+- `#[derive(Encrypted)]` with `#[external]` state tier
+- Cache statistics in MRENCLAVE state
+- Cache configuration in MRSIGNER state
+- CRUD operations with transparent encryption
+
+## Full source
+
+```rust
+use axum::{
+    extract::{Extension, Path},
+    http::StatusCode,
+    response::{IntoResponse, Json},
+    routing::{delete, get, post},
+    Router,
+};
+use guarantee::{state, attest, Encrypted, crypto::Encryptable};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+#[derive(Encrypted, Serialize, Deserialize, Clone, Debug)]
+struct CacheEntry {
+    key: String,
+    #[encrypt]
+    value: String,      // Encrypted when sensitive=true
+    sensitive: bool,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct CacheStats {
+    total_gets: u64,
+    total_sets: u64,
+    cache_hits: u64,
+    cache_misses: u64,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct CacheConfig {
+    max_entries: u32,
+    default_ttl_secs: u64,
+}
+
+state! {
+    #[mrenclave]
+    CacheStats,
+
+    #[mrsigner]
+    CacheConfig,
+
+    #[external]
+    CacheEntry,
+}
+
+#[derive(Deserialize)]
+struct SetCacheRequest {
+    value: String,
+    #[serde(default)]
+    sensitive: bool,
+}
+
+#[attest]
+async fn set_cache(
+    Extension(tee): Extension<Arc<RwLock<TeeState>>>,
+    Extension(redis): Extension<Arc<MockRedis>>,
+    Path(key): Path<String>,
+    Json(body): Json<SetCacheRequest>,
+) -> impl IntoResponse {
+    let mut state = tee.write().await;
+    state.enclave_mut().cache_stats.total_sets += 1;
+
+    if body.sensitive {
+        let entry = CacheEntry {
+            key: key.clone(),
+            value: body.value,
+            sensitive: true,
+        };
+        let encrypted = match state.encrypt_cache_entry(&entry) {
+            Ok(e) => e,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": e.to_string()})),
+                ).into_response()
+            }
+        };
+        redis.set(&format!("cache:{key}"), &encrypted.value).await;
+        redis.set(&format!("meta:{key}"), "sensitive").await;
+    } else {
+        redis.set(&format!("cache:{key}"), &body.value).await;
+        redis.set(&format!("meta:{key}"), "plain").await;
+    }
+
+    let _ = state.seal(std::path::Path::new("./sealed"));
+
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "status": "stored",
+            "key": key,
+            "encrypted": body.sensitive,
+        })),
+    ).into_response()
+}
+
+#[attest]
+async fn get_cache(
+    Extension(tee): Extension<Arc<RwLock<TeeState>>>,
+    Extension(redis): Extension<Arc<MockRedis>>,
+    Path(key): Path<String>,
+) -> impl IntoResponse {
+    let mut state = tee.write().await;
+    state.enclave_mut().cache_stats.total_gets += 1;
+
+    let raw_value = match redis.get(&format!("cache:{key}")).await {
+        Some(v) => {
+            state.enclave_mut().cache_stats.cache_hits += 1;
+            v
+        }
+        None => {
+            state.enclave_mut().cache_stats.cache_misses += 1;
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Key not found"})),
+            ).into_response()
+        }
+    };
+
+    let meta = redis.get(&format!("meta:{key}")).await.unwrap_or_default();
+    let is_sensitive = meta == "sensitive";
+
+    let value = if is_sensitive {
+        let encrypted = EncryptedCacheEntry {
+            key: key.clone(),
+            value: raw_value,
+            sensitive: true,
+        };
+        match state.decrypt_cache_entry(&encrypted) {
+            Ok(entry) => entry.value,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Decryption failed: {e}")})),
+                ).into_response()
+            }
+        }
+    } else {
+        raw_value
+    };
+
+    Json(serde_json::json!({
+        "key": key,
+        "value": value,
+        "encrypted_at_rest": is_sensitive,
+    })).into_response()
+}
+
+async fn get_stats(
+    Extension(tee): Extension<Arc<RwLock<TeeState>>>,
+) -> Json<serde_json::Value> {
+    let state = tee.read().await;
+    let stats = state.enclave().cache_stats();
+    Json(serde_json::json!({
+        "total_gets": stats.total_gets,
+        "total_sets": stats.total_sets,
+        "cache_hits": stats.cache_hits,
+        "cache_misses": stats.cache_misses,
+        "hit_rate": if stats.total_gets > 0 {
+            format!("{:.1}%", (stats.cache_hits as f64 / stats.total_gets as f64) * 100.0)
+        } else {
+            "N/A".to_string()
+        },
+    }))
+}
+```
+
+## Run it
+
+```bash
+cargo run --example redis-cache
+```
+
+## Try it
+
+```bash
+# Store a sensitive value (encrypted in Redis)
+curl -X POST http://localhost:8080/cache/api-key \
+  -H 'Content-Type: application/json' \
+  -d '{"value":"sk-secret-12345","sensitive":true}'
+```
+
+```json
+{"status": "stored", "key": "api-key", "encrypted": true}
+```
+
+```bash
+# Store a non-sensitive value (plaintext in Redis)
+curl -X POST http://localhost:8080/cache/greeting \
+  -H 'Content-Type: application/json' \
+  -d '{"value":"hello world","sensitive":false}'
+```
+
+```bash
+# Retrieve (auto-decrypted in enclave)
+curl http://localhost:8080/cache/api-key | jq
+```
+
+```json
+{
+  "key": "api-key",
+  "value": "sk-secret-12345",
+  "encrypted_at_rest": true
+}
+```
+
+```bash
+# Check cache statistics
+curl http://localhost:8080/stats | jq
+```
+
+```json
+{
+  "total_gets": 1,
+  "total_sets": 2,
+  "cache_hits": 1,
+  "cache_misses": 0,
+  "hit_rate": "100.0%"
+}
+```
+
+## Key patterns
+
+### Conditional encryption
+
+Not every cache value needs encryption. The `sensitive` flag controls whether values are encrypted before Redis storage:
+
+```rust
+if body.sensitive {
+    let encrypted = state.encrypt_cache_entry(&entry)?;
+    redis.set(&key, &encrypted.value).await;  // Ciphertext
+} else {
+    redis.set(&key, &body.value).await;        // Plaintext
+}
+```
+
+### Metadata tracking
+
+A separate `meta:{key}` entry tracks whether a value is encrypted, so the read path knows whether to decrypt:
+
+```rust
+let is_sensitive = redis.get(&format!("meta:{key}")).await == Some("sensitive");
+if is_sensitive {
+    // Decrypt before returning
+}
+```
+
+### Cache stats as MRENCLAVE state
+
+Statistics reset on each deployment — you get per-deployment cache performance metrics automatically.

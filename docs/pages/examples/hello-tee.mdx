@@ -1,0 +1,157 @@
+# Hello TEE
+
+The simplest possible attested service. A single handler that returns a JSON message with a hardware-backed attestation signature.
+
+## What this demonstrates
+
+- Basic `state!` macro with `#[mrenclave]`
+- The `#[attest]` macro for automatic response signing
+- The `/.well-known/tee-attestation` endpoint
+- `TeeState` initialization and axum integration
+
+## Full source
+
+```rust
+use axum::{extract::Extension, response::Json, routing::get, Router};
+use guarantee::{attest, state};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct AppData {
+    request_count: u64,
+}
+
+state! {
+    #[mrenclave]
+    AppData,
+}
+
+#[attest]
+async fn hello() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "message": "hello from TEE" }))
+}
+
+async fn attestation_info(
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
+) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    Json(s.attestation_json())
+}
+
+#[tokio::main]
+async fn main() {
+    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let state = TeeState::initialize(std::path::Path::new("./sealed"))
+        .expect("Failed to initialize TeeState");
+
+    println!("Starting hello-tee on port {port}");
+
+    let app = Router::new()
+        .route("/hello", get(hello))
+        .route("/.well-known/tee-attestation", get(attestation_info))
+        .layer(Extension(Arc::new(RwLock::new(state))));
+
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+        .await
+        .expect("Failed to bind");
+    axum::serve(listener, app).await.expect("Server failed");
+}
+```
+
+## Run it
+
+```bash
+cargo run --example hello-tee
+```
+
+## Try it
+
+```bash
+# Get the attested response
+curl -i http://localhost:8080/hello
+```
+
+```http
+HTTP/1.1 200 OK
+x-tee-attestation: v=1; sig=abc123...; hash=def456...; ts=1711234567890; key=789abc...
+x-tee-verified: true
+x-tee-request-id: 550e8400-e29b-41d4-a716-446655440000
+content-type: application/json
+
+{"message":"hello from TEE"}
+```
+
+```bash
+# Check the attestation endpoint
+curl http://localhost:8080/.well-known/tee-attestation | jq
+```
+
+```json
+{
+  "version": 1,
+  "public_key": "3b6a27bcceb6a42d62a3a8d02a6f0d73...",
+  "mode": "dev",
+  "quote": {
+    "raw_quote_b64": "...",
+    "mr_enclave": "...",
+    "mr_signer": "..."
+  }
+}
+```
+
+## Walkthrough
+
+### 1. Define state
+
+```rust
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct AppData {
+    request_count: u64,
+}
+
+state! {
+    #[mrenclave]
+    AppData,
+}
+```
+
+The `state!` macro generates a `TeeState` struct with an `EnclaveState` containing an `AppData` field and an Ed25519 signing key. Since we used `#[mrenclave]`, this state resets on every redeploy.
+
+### 2. Annotate the handler
+
+```rust
+#[attest]
+async fn hello() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "message": "hello from TEE" }))
+}
+```
+
+The `#[attest]` macro wraps this handler to sign the response. After your handler runs, it computes a SHA-256 hash of the response body, signs it with the enclave's Ed25519 key, and attaches the signature as `X-TEE-Attestation`.
+
+### 3. Serve attestation info
+
+```rust
+async fn attestation_info(
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
+) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    Json(s.attestation_json())
+}
+```
+
+This endpoint returns the startup quote and public key. Callers fetch this once and use it to verify all subsequent response signatures.
+
+### 4. Wire it up
+
+```rust
+let state = TeeState::initialize(std::path::Path::new("./sealed"))?;
+
+let app = Router::new()
+    .route("/hello", get(hello))
+    .route("/.well-known/tee-attestation", get(attestation_info))
+    .layer(Extension(Arc::new(RwLock::new(state))));
+```
+
+`TeeState` is shared across handlers via axum's `Extension` layer, wrapped in `Arc<RwLock<_>>` for concurrent access.

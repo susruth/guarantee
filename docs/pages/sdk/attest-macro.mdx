@@ -1,0 +1,95 @@
+# #[attest] Macro
+
+The `#[attest]` attribute macro transforms an axum handler to automatically sign every response with the enclave's attestation key.
+
+## Usage
+
+```rust
+use guarantee::attest;
+use axum::response::Json;
+
+#[attest]
+async fn my_handler() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "data": "value" }))
+}
+```
+
+## What it does
+
+The macro wraps your handler to:
+
+1. Extract `Arc<RwLock<TeeState>>` from axum's `Extension` layer
+2. Generate a unique request ID (UUID v4)
+3. Execute your original handler
+4. Convert the response body to bytes
+5. Call `state.sign_response(body_bytes, request_id)`
+6. Insert three headers into the response:
+
+| Header | Value |
+|--------|-------|
+| `X-TEE-Attestation` | `v=1; sig=<base64>; hash=<hex>; ts=<ms>; key=<hex>` |
+| `X-TEE-Verified` | `true` |
+| `X-TEE-Request-Id` | UUID v4 |
+
+## Requirements
+
+The `#[attest]` macro expects `TeeState` to be available as an axum `Extension`. This means your router must include:
+
+```rust
+let state = TeeState::initialize(std::path::Path::new("./sealed"))?;
+
+let app = Router::new()
+    .route("/api", get(my_handler))
+    .layer(Extension(Arc::new(RwLock::new(state))));
+```
+
+## Accessing state in attested handlers
+
+You can access `TeeState` within an `#[attest]` handler just like any axum extractor:
+
+```rust
+#[attest]
+async fn get_price(
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
+    Path(symbol): Path<String>,
+) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    let cache = s.enclave().price_cache();
+    // ...
+    Json(serde_json::json!({ "price": 42.0 }))
+}
+```
+
+## Return types
+
+The macro works with any type that implements axum's `IntoResponse`:
+
+```rust
+// Json
+#[attest]
+async fn json_handler() -> Json<MyStruct> { /* ... */ }
+
+// Tuple with status code
+#[attest]
+async fn tuple_handler() -> (StatusCode, Json<MyStruct>) { /* ... */ }
+
+// impl IntoResponse
+#[attest]
+async fn dynamic_handler() -> impl IntoResponse { /* ... */ }
+```
+
+## Header format
+
+The `X-TEE-Attestation` header uses a semicolon-delimited format:
+
+```
+v=1; sig=<base64(ed25519_signature)>; hash=<hex(sha256)>; ts=<unix_ms>; key=<hex(ed25519_pubkey)>
+```
+
+| Field | Description |
+|-------|-------------|
+| `v` | Protocol version (always `1`) |
+| `sig` | Base64-encoded Ed25519 signature of the payload hash |
+| `hash` | Hex SHA-256 of `body ‖ timestamp_ms ‖ request_id` |
+| `ts` | Unix timestamp in milliseconds when the signature was produced |
+| `key` | Hex-encoded Ed25519 public key (same as in startup quote) |

@@ -1,0 +1,126 @@
+# #[derive(Encrypted)]
+
+The `Encrypted` derive macro generates an encrypted variant of a struct and implements the `Encryptable` trait for automatic field-level AES-256-GCM encryption.
+
+## Usage
+
+```rust
+use guarantee::{Encrypted, crypto::Encryptable};
+use serde::{Serialize, Deserialize};
+
+#[derive(Encrypted, Serialize, Deserialize, Clone, Debug)]
+struct UserRecord {
+    user_id: String,       // Stays plaintext
+    #[encrypt]
+    ssn: String,           // Encrypted
+    #[encrypt]
+    bank_account: String,  // Encrypted
+    email: String,         // Stays plaintext
+}
+```
+
+## What it generates
+
+### Encrypted struct
+
+```rust
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct EncryptedUserRecord {
+    user_id: String,       // Unchanged
+    ssn: String,           // Contains "enc:v1:k1:<nonce>:<ciphertext>"
+    bank_account: String,  // Contains "enc:v1:k1:<nonce>:<ciphertext>"
+    email: String,         // Unchanged
+}
+```
+
+### `Encryptable` implementation
+
+```rust
+impl Encryptable for UserRecord {
+    type Encrypted = EncryptedUserRecord;
+
+    fn encrypt(&self, key: &[u8; 32]) -> Result<EncryptedUserRecord, SdkError>;
+    fn decrypt_from(encrypted: &EncryptedUserRecord, key: &[u8; 32]) -> Result<Self, SdkError>;
+
+    fn encrypt_versioned(
+        &self,
+        key: &[u8; 32],
+        version: u32,
+        purpose: &[u8],
+    ) -> Result<EncryptedUserRecord, SdkError>;
+
+    fn decrypt_versioned(
+        encrypted: &EncryptedUserRecord,
+        current_key: &[u8; 32],
+        current_version: u32,
+        retired_keys: &[RetiredKeyEntry],
+        purpose: &[u8],
+    ) -> Result<Self, SdkError>;
+}
+```
+
+## The `#[encrypt]` attribute
+
+Place `#[encrypt]` on any `String` field to mark it for encryption:
+
+```rust
+#[derive(Encrypted, Serialize, Deserialize, Clone, Debug)]
+struct Record {
+    id: String,             // Not encrypted
+    #[encrypt]
+    secret: String,         // Encrypted
+    #[encrypt]
+    another_secret: String, // Encrypted
+    label: String,          // Not encrypted
+}
+```
+
+:::warning
+Only `String` fields can be marked with `#[encrypt]`. For other types, serialize to a String first (e.g., using `serde_json::to_string`).
+:::
+
+## With `state!` macro
+
+When combined with `#[external]` in the `state!` macro, you get convenient methods on `TeeState`:
+
+```rust
+state! {
+    #[mrsigner]
+    Config,
+
+    #[external]
+    UserRecord,
+}
+
+// Generated methods:
+let encrypted = state.encrypt_user_record(&record)?;
+let decrypted = state.decrypt_user_record(&encrypted)?;
+```
+
+These methods automatically use the MRSIGNER master key with purpose-derived keys and support key rotation.
+
+## Manual usage
+
+Without the `state!` macro, use the `Encryptable` trait directly:
+
+```rust
+use guarantee::crypto::Encryptable;
+
+let key = [0u8; 32]; // Your 256-bit key
+
+let record = UserRecord {
+    user_id: "alice".into(),
+    ssn: "123-45-6789".into(),
+    bank_account: "9876543210".into(),
+    email: "alice@example.com".into(),
+};
+
+// Encrypt
+let encrypted = record.encrypt(&key)?;
+assert!(encrypted.ssn.starts_with("enc:v1:"));
+assert_eq!(encrypted.email, "alice@example.com"); // Unchanged
+
+// Decrypt
+let decrypted = UserRecord::decrypt_from(&encrypted, &key)?;
+assert_eq!(decrypted.ssn, "123-45-6789");
+```

@@ -2,6 +2,7 @@ use axum::{extract::Extension, response::Json, routing::get, Router};
 use guarantee::{attest, state};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 struct AppData {
@@ -26,7 +27,7 @@ async fn attest_adds_attestation_headers() {
 
     let app = Router::new()
         .route("/hello", get(hello_handler))
-        .layer(Extension(Arc::new(state)));
+        .layer(Extension(Arc::new(RwLock::new(state))));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

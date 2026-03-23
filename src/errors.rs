@@ -25,4 +25,13 @@ pub enum SdkError {
 
     #[error("Crypto error: {0}")]
     CryptoError(String),
+
+    #[error("RA-TLS error: {0}")]
+    RaTlsError(String),
+
+    #[error("Certificate error: {0}")]
+    CertificateError(String),
+
+    #[error("TLS error: {0}")]
+    TlsError(String),
 }

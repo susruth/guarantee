@@ -1,0 +1,66 @@
+# Sealing API
+
+Low-level functions for sealing and unsealing data. The `state!` macro uses these internally, but they're available for custom use cases.
+
+## `seal_to_file`
+
+```rust
+use guarantee::seal::{seal_to_file, SealMode};
+use std::path::Path;
+
+seal_to_file(
+    b"sensitive data",
+    Path::new("./my-data.sealed"),
+    SealMode::MrSigner,
+)?;
+```
+
+In enclave mode, uses Gramine Protected Files for hardware-backed encryption. In dev mode, writes plaintext with a mode header.
+
+## `unseal_from_file`
+
+```rust
+use guarantee::seal::{unseal_from_file, SealMode};
+use std::path::Path;
+
+let data = unseal_from_file(
+    Path::new("./my-data.sealed"),
+    SealMode::MrSigner,
+)?;
+```
+
+## `SealMode`
+
+```rust
+pub enum SealMode {
+    MrEnclave,  // Bound to binary measurement — resets on redeploy
+    MrSigner,   // Bound to signing key — persists across redeploys
+}
+```
+
+## `sign_with_enclave_key`
+
+Utility for signing response bodies with an Ed25519 key:
+
+```rust
+use guarantee::seal::sign_with_enclave_key;
+
+let header = sign_with_enclave_key(&signing_key, body, request_id);
+```
+
+## `signing_key_serde`
+
+Serde module for Ed25519 `SigningKey` serialization:
+
+```rust
+use guarantee::seal::signing_key_serde;
+use ed25519_dalek::SigningKey;
+
+#[derive(Serialize, Deserialize)]
+struct MyState {
+    #[serde(with = "signing_key_serde")]
+    key: SigningKey,
+}
+```
+
+Serializes the key as hex, deserializes from hex.

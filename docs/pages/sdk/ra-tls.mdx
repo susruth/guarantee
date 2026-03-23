@@ -1,0 +1,64 @@
+# RA-TLS
+
+Remote Attestation TLS (RA-TLS) embeds SGX attestation quotes directly into X.509 certificates, enabling TLS connections where the certificate itself proves the server is running in a genuine enclave.
+
+:::info
+RA-TLS requires the `ra-tls` feature flag:
+
+```toml
+[dependencies]
+guarantee = { version = "0.1.2", features = ["ra-tls"] }
+```
+:::
+
+## `serve_ra_tls`
+
+Start an HTTPS server with RA-TLS certificates:
+
+```rust
+use guarantee::ra_tls::server::serve_ra_tls;
+
+// Starts both HTTP (8080) and HTTPS (8443) servers
+serve_ra_tls(app, 8080, 8443).await?;
+```
+
+The RA-TLS server:
+1. Generates a self-signed X.509 certificate
+2. Embeds the SGX attestation quote as a certificate extension
+3. Uses ECDSA P-256 for the TLS certificate key
+4. Serves your axum app over both HTTP and HTTPS
+
+## How it works
+
+In traditional TLS, a certificate authority vouches for the server's identity. In RA-TLS, the SGX hardware itself vouches — the attestation quote embedded in the certificate proves:
+
+- The server is running inside a genuine SGX enclave
+- The enclave has a specific measurement (MRENCLAVE)
+- The TLS certificate key belongs to that enclave
+
+Clients verify the RA-TLS certificate by:
+1. Extracting the embedded SGX quote from the X.509 extension
+2. Verifying the quote with Intel's DCAP attestation service
+3. Confirming the certificate's public key matches the quote's user report data
+
+## When to use RA-TLS
+
+Use RA-TLS when you need **transport-level attestation** — proving the TLS connection terminates inside a genuine enclave. This is complementary to per-response attestation:
+
+| Approach | Proves |
+|----------|--------|
+| `#[attest]` (response headers) | Each response came from the attested enclave |
+| RA-TLS (certificate) | The TLS connection terminates in the attested enclave |
+
+For maximum security, use both: RA-TLS for transport attestation, `#[attest]` for data attestation.
+
+## Dependencies
+
+The `ra-tls` feature adds:
+- `rustls` — TLS implementation
+- `rcgen` — Self-signed certificate generation
+- `x509-parser` — X.509 parsing
+- `axum-server` — TLS-capable axum server
+- `rustls-pemfile` — PEM encoding
+- `time` — Certificate validity periods
+- `p256` — ECDSA P-256 for certificate keys

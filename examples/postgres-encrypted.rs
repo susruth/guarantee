@@ -30,6 +30,7 @@ use axum::{
 use guarantee::{state, attest, Encrypted, crypto::Encryptable};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 // ---------------------------------------------------------------------------
 // Data model — #[encrypt] fields are encrypted at rest in the DB
@@ -88,10 +89,11 @@ impl MockDb {
 /// POST /users — create a user with encrypted sensitive fields.
 #[attest]
 async fn create_user(
-    Extension(state): Extension<Arc<TeeState>>,
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
     Extension(db): Extension<Arc<MockDb>>,
     Json(user): Json<UserRecord>,
 ) -> impl IntoResponse {
+    let state = state.read().await;
     // Encrypt sensitive fields before storing
     let encrypted = match state.encrypt_user_record(&user) {
         Ok(e) => e,
@@ -128,10 +130,11 @@ async fn create_user(
 /// GET /users/:id — retrieve and decrypt a user record.
 #[attest]
 async fn get_user(
-    Extension(state): Extension<Arc<TeeState>>,
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
     Extension(db): Extension<Arc<MockDb>>,
     Path(user_id): Path<String>,
 ) -> impl IntoResponse {
+    let state = state.read().await;
     let records = db.records.read().await;
     let encrypted = match records.get(&user_id) {
         Some(r) => r,
@@ -183,9 +186,10 @@ async fn get_user_raw(
 }
 
 async fn attestation_info(
-    Extension(state): Extension<Arc<TeeState>>,
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
 ) -> Json<serde_json::Value> {
-    Json(state.attestation_json())
+    let s = state.read().await;
+    Json(s.attestation_json())
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +213,7 @@ async fn main() {
         .route("/users/:id", get(get_user))
         .route("/users/:id/raw", get(get_user_raw))
         .route("/.well-known/tee-attestation", get(attestation_info))
-        .layer(Extension(Arc::new(state)))
+        .layer(Extension(Arc::new(RwLock::new(state))))
         .layer(Extension(db));
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))

@@ -1,0 +1,106 @@
+# EnclaveAttestor
+
+The core struct that manages keypair generation, startup attestation, and per-response signing. In most cases, you won't use this directly — the `state!` macro wraps it for you. But it's available for advanced use cases.
+
+## API
+
+### `initialize`
+
+```rust
+pub async fn initialize() -> Result<Arc<Self>, SdkError>
+```
+
+Auto-detects attestation mode from the `GUARANTEE_ATTEST_MODE` environment variable. Defaults to `EveryResponse`.
+
+- Generates an ephemeral Ed25519 keypair
+- In enclave mode: writes public key hash to `/dev/attestation/user_report_data`, reads the DCAP quote
+- In dev mode: creates a mock startup quote
+
+### `initialize_with_mode`
+
+```rust
+pub async fn initialize_with_mode(mode: AttestationMode) -> Result<Arc<Self>, SdkError>
+```
+
+Same as `initialize`, but with an explicit attestation mode.
+
+### `sign_response`
+
+```rust
+pub fn sign_response(&self, body: &[u8], request_id: &str) -> AttestationHeader
+```
+
+Signs a response body. Computes `SHA-256(body ‖ timestamp_ms ‖ request_id)` and signs with the ephemeral Ed25519 key.
+
+In `StartupOnly` mode, returns a header with empty signature and hash fields.
+
+### `startup_attestation_json`
+
+```rust
+pub fn startup_attestation_json(&self) -> Result<serde_json::Value, SdkError>
+```
+
+Returns the attestation info as JSON, suitable for the `/.well-known/tee-attestation` endpoint.
+
+## Fields
+
+```rust
+pub struct EnclaveAttestor {
+    signing_key: SigningKey,                            // Private
+    pub public_key: VerifyingKey,                       // Public
+    pub startup_quote: Arc<RwLock<Option<StartupQuote>>>, // Public
+    pub mode: AttestationMode,                          // Public
+}
+```
+
+## `AttestationMode`
+
+```rust
+pub enum AttestationMode {
+    EveryResponse,  // Sign every response (default)
+    StartupOnly,    // Only produce startup quote
+}
+```
+
+Set via environment:
+
+```bash
+# Default: every response is signed
+GUARANTEE_ATTEST_MODE=every-response
+
+# Skip per-response signatures
+GUARANTEE_ATTEST_MODE=startup-only
+```
+
+## Example: standalone usage
+
+```rust
+use guarantee::EnclaveAttestor;
+use axum::{extract::Extension, response::Json, routing::get, Router};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() {
+    let attestor = EnclaveAttestor::initialize().await.unwrap();
+
+    let app = Router::new()
+        .route("/health", get(health))
+        .layer(Extension(attestor));
+
+    // ...
+}
+
+async fn health(
+    Extension(attestor): Extension<Arc<EnclaveAttestor>>,
+) -> Json<serde_json::Value> {
+    let header = attestor.sign_response(b"ok", "health-check");
+    Json(serde_json::json!({
+        "status": "ok",
+        "attestation": header.to_header_value()
+    }))
+}
+```
+
+:::tip
+For most applications, prefer the `state!` macro over direct `EnclaveAttestor` usage. The macro integrates attestation with state management and generates all the boilerplate for you.
+:::

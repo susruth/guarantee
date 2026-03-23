@@ -1,4 +1,4 @@
-use guarantee::crypto::Encryptable;
+use guarantee::crypto::{Encryptable, RetiredKeyEntry};
 use guarantee::{state, Encrypted};
 use serde::{Deserialize, Serialize};
 
@@ -162,5 +162,114 @@ fn per_type_key_is_deterministic_across_reinit() {
     // Re-initialize (unseal) and decrypt -- should work because same master key
     let state2 = TeeState::initialize(dir.path()).expect("reinit");
     let decrypted = state2.decrypt_user_record(&encrypted).expect("decrypt");
+    assert_eq!(decrypted, record);
+}
+
+#[test]
+fn versioned_encrypt_decrypt_roundtrip() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = TeeState::initialize(dir.path()).expect("init");
+
+    let record = UserRecord {
+        user_id: "frank".into(),
+        ssn: "555-66-7777".into(),
+        bank_account: "1111111111".into(),
+        email: "frank@example.com".into(),
+    };
+
+    let encrypted = state.encrypt_user_record(&record).expect("encrypt");
+
+    // Versioned format uses "enc:v1:k<N>:" prefix
+    assert!(encrypted.ssn.starts_with("enc:v1:k"));
+    assert!(encrypted.bank_account.starts_with("enc:v1:k"));
+
+    let decrypted = state.decrypt_user_record(&encrypted).expect("decrypt");
+    assert_eq!(decrypted, record);
+}
+
+#[test]
+fn rotate_then_decrypt_old_data() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut state = TeeState::initialize(dir.path()).expect("init");
+
+    let record = UserRecord {
+        user_id: "grace".into(),
+        ssn: "888-99-0000".into(),
+        bank_account: "2222222222".into(),
+        email: "grace@example.com".into(),
+    };
+
+    // Encrypt with original key (version 1)
+    let encrypted = state.encrypt_user_record(&record).expect("encrypt");
+
+    // Rotate key
+    state.rotate_master_key().expect("rotate");
+    assert_eq!(state.signer().current_key_version, 2);
+    assert_eq!(state.signer().retired_keys.len(), 1);
+
+    // Old data should still decrypt using the retired key
+    let decrypted = state.decrypt_user_record(&encrypted).expect("decrypt after rotation");
+    assert_eq!(decrypted, record);
+}
+
+#[test]
+fn rotate_multiple_times_decrypt_all() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut state = TeeState::initialize(dir.path()).expect("init");
+
+    let record = UserRecord {
+        user_id: "heidi".into(),
+        ssn: "111-11-1111".into(),
+        bank_account: "3333333333".into(),
+        email: "heidi@example.com".into(),
+    };
+
+    // Encrypt with version 1
+    let enc_v1 = state.encrypt_user_record(&record).expect("encrypt v1");
+
+    // Rotate to version 2
+    state.rotate_master_key().expect("rotate to v2");
+    let enc_v2 = state.encrypt_user_record(&record).expect("encrypt v2");
+
+    // Rotate to version 3
+    state.rotate_master_key().expect("rotate to v3");
+    let enc_v3 = state.encrypt_user_record(&record).expect("encrypt v3");
+
+    assert_eq!(state.signer().current_key_version, 3);
+    assert_eq!(state.signer().retired_keys.len(), 2);
+
+    // All versions should decrypt
+    let dec_v1 = state.decrypt_user_record(&enc_v1).expect("decrypt v1");
+    let dec_v2 = state.decrypt_user_record(&enc_v2).expect("decrypt v2");
+    let dec_v3 = state.decrypt_user_record(&enc_v3).expect("decrypt v3");
+    assert_eq!(dec_v1, record);
+    assert_eq!(dec_v2, record);
+    assert_eq!(dec_v3, record);
+}
+
+#[test]
+fn rotation_persists_across_seal_unseal() {
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    let record = UserRecord {
+        user_id: "ivan".into(),
+        ssn: "444-55-6666".into(),
+        bank_account: "4444444444".into(),
+        email: "ivan@example.com".into(),
+    };
+
+    let encrypted;
+    {
+        let mut state = TeeState::initialize(dir.path()).expect("init");
+        encrypted = state.encrypt_user_record(&record).expect("encrypt v1");
+        state.rotate_master_key().expect("rotate");
+        state.seal(dir.path()).expect("seal");
+    }
+
+    // Re-initialize from sealed state — retired keys should be preserved
+    let state = TeeState::initialize(dir.path()).expect("reinit");
+    assert_eq!(state.signer().current_key_version, 2);
+    assert_eq!(state.signer().retired_keys.len(), 1);
+    let decrypted = state.decrypt_user_record(&encrypted).expect("decrypt after reinit");
     assert_eq!(decrypted, record);
 }

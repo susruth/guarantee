@@ -15,6 +15,10 @@ readme = "README.md"
 keywords = ["tee", "sgx", "attestation", "enclave", "gramine"]
 categories = ["cryptography", "web-programming"]
 
+[features]
+default = []
+ra-tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:x509-parser", "dep:axum-server", "dep:rustls-pemfile", "dep:axum", "dep:reqwest", "dep:time"]
+
 [dependencies]
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 sha2 = "0.10"
@@ -31,6 +35,18 @@ guarantee-macros = { version = "0.1.2", path = "macros" }
 aes-gcm = "0.10"
 hkdf = "0.12"
 hmac = "0.12"
+p256 = { version = "0.13", features = ["ecdsa"] }
+
+# RA-TLS optional dependencies
+rustls = { version = "0.23", features = ["aws_lc_rs"], optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+rcgen = { version = "0.13", optional = true }
+x509-parser = { version = "0.16", optional = true }
+axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
+rustls-pemfile = { version = "2", optional = true }
+axum = { version = "0.7", features = ["ws"], optional = true }
+reqwest = { version = "0.12", features = ["json", "rustls-tls-manual-roots"], optional = true }
+time = { version = "0.3", optional = true }
 
 [dev-dependencies]
 axum = "0.7"

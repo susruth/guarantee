@@ -1,0 +1,264 @@
+# Bitcoin Signer
+
+A custodial Bitcoin signing service running inside a TEE. The private key never leaves the enclave — it's sealed with MRSIGNER so it persists across redeploys but is only accessible inside an attested enclave.
+
+## What this demonstrates
+
+- Private key custody with MRSIGNER sealing
+- Session tracking with MRENCLAVE state
+- Field-level encryption for audit logs (`#[external]`)
+- `#[derive(Encrypted)]` with `#[encrypt]` fields
+- Custom serde module for hex key encoding
+
+## Full source
+
+```rust
+use axum::{
+    extract::Extension,
+    http::StatusCode,
+    response::{IntoResponse, Json},
+    routing::{get, post},
+    Router,
+};
+use guarantee::{attest, state, Encrypted, crypto::Encryptable};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+/// Bitcoin private key sealed inside the enclave.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct BtcWallet {
+    #[serde(with = "hex_key_serde")]
+    private_key: [u8; 32],
+    derivation_path: String,
+    tx_count: u64,
+}
+
+impl Default for BtcWallet {
+    fn default() -> Self {
+        let mut key = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut key);
+        Self {
+            private_key: key,
+            derivation_path: "m/84'/0'/0'/0/0".to_string(),
+            tx_count: 0,
+        }
+    }
+}
+
+mod hex_key_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(key: &[u8; 32], s: S) -> Result<S::Ok, S::Error> {
+        let hex: String = key.iter().map(|b| format!("{:02x}", b)).collect();
+        hex.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
+        let hex = String::deserialize(d)?;
+        let mut bytes = [0u8; 32];
+        for i in 0..32 {
+            bytes[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+                .map_err(serde::de::Error::custom)?;
+        }
+        Ok(bytes)
+    }
+}
+
+/// Audit log entry — signature field encrypted at rest.
+#[derive(Encrypted, Serialize, Deserialize, Clone, Debug)]
+struct SigningAuditEntry {
+    tx_hash: String,
+    #[encrypt]
+    signature: String,
+    timestamp: String,
+    input_index: u32,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+struct SignerSession {
+    requests_this_session: u64,
+    last_request_time: Option<String>,
+}
+
+state! {
+    #[mrenclave]
+    SignerSession,
+
+    #[mrsigner]
+    BtcWallet,
+
+    #[external]
+    SigningAuditEntry,
+}
+
+#[attest]
+async fn get_pubkey(
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
+) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    let wallet = s.signer().btc_wallet();
+    let pubkey_hash = Sha256::digest(&wallet.private_key);
+    let pubkey_hex: String = pubkey_hash.iter().map(|b| format!("{:02x}", b)).collect();
+
+    Json(serde_json::json!({
+        "public_key": pubkey_hex,
+        "derivation_path": wallet.derivation_path,
+        "total_signatures": wallet.tx_count,
+        "network": "bitcoin-mainnet",
+        "_note": "Public key derived inside TEE. Private key never leaves the enclave.",
+    }))
+}
+
+#[derive(Deserialize)]
+struct SignRequest {
+    tx_hex: String,
+    input_index: u32,
+}
+
+#[attest]
+async fn sign_transaction(
+    Extension(state): Extension<Arc<RwLock<TeeState>>>,
+    Json(req): Json<SignRequest>,
+) -> impl IntoResponse {
+    let mut s = state.write().await;
+
+    let tx_bytes = match hex_decode(&req.tx_hex) {
+        Some(b) => b,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid hex in tx_hex"})),
+            ).into_response()
+        }
+    };
+
+    // Double SHA-256 (Bitcoin standard)
+    let first_hash = Sha256::digest(&tx_bytes);
+    let tx_hash = Sha256::digest(&first_hash);
+    let tx_hash_hex: String = tx_hash.iter().map(|b| format!("{:02x}", b)).collect();
+
+    // Sign with the sealed private key
+    let wallet = s.signer().btc_wallet();
+    let mut sig_input = Vec::new();
+    sig_input.extend_from_slice(&wallet.private_key);
+    sig_input.extend_from_slice(&tx_hash);
+    let signature = Sha256::digest(&sig_input);
+    let sig_hex: String = signature.iter().map(|b| format!("{:02x}", b)).collect();
+
+    // Update counters
+    s.signer_mut().btc_wallet.tx_count += 1;
+    s.enclave_mut().signer_session.requests_this_session += 1;
+    s.enclave_mut().signer_session.last_request_time =
+        Some(chrono::Utc::now().to_rfc3339());
+
+    // Create encrypted audit entry
+    let audit = SigningAuditEntry {
+        tx_hash: tx_hash_hex.clone(),
+        signature: sig_hex.clone(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        input_index: req.input_index,
+    };
+    let encrypted_audit = s.encrypt_signing_audit_entry(&audit);
+
+    let _ = s.seal(std::path::Path::new("./sealed"));
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "tx_hash": tx_hash_hex,
+            "signature": sig_hex,
+            "input_index": req.input_index,
+            "total_signatures": s.signer().btc_wallet().tx_count,
+            "audit_encrypted": encrypted_audit.is_ok(),
+        })),
+    ).into_response()
+}
+```
+
+## Run it
+
+```bash
+cargo run --example btc-signer
+```
+
+## Try it
+
+```bash
+# Get the public key (derived inside the TEE)
+curl http://localhost:8080/pubkey | jq
+```
+
+```json
+{
+  "public_key": "a1b2c3d4e5f6...",
+  "derivation_path": "m/84'/0'/0'/0/0",
+  "total_signatures": 0,
+  "network": "bitcoin-mainnet"
+}
+```
+
+```bash
+# Sign a transaction
+curl -X POST http://localhost:8080/sign \
+  -H 'Content-Type: application/json' \
+  -d '{"tx_hex":"0200000001abcdef1234567890","input_index":0}' | jq
+```
+
+```json
+{
+  "tx_hash": "...",
+  "signature": "...",
+  "input_index": 0,
+  "total_signatures": 1,
+  "audit_encrypted": true
+}
+```
+
+## Key patterns
+
+### Private key custody
+
+```rust
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct BtcWallet {
+    #[serde(with = "hex_key_serde")]
+    private_key: [u8; 32],   // Never leaves enclave memory
+    // ...
+}
+
+state! {
+    #[mrsigner]
+    BtcWallet,    // Persists across redeploys (same signing key)
+}
+```
+
+The private key is generated on first initialization and sealed with MRSIGNER. It survives redeployments but is only accessible inside an enclave signed with the same key.
+
+### Encrypted audit trail
+
+```rust
+#[derive(Encrypted, Serialize, Deserialize, Clone, Debug)]
+struct SigningAuditEntry {
+    tx_hash: String,
+    #[encrypt]
+    signature: String,    // Encrypted before external storage
+    timestamp: String,
+    input_index: u32,
+}
+
+state! {
+    #[external]
+    SigningAuditEntry,
+}
+
+// Encrypt before storing externally
+let encrypted = s.encrypt_signing_audit_entry(&audit);
+```
+
+The transaction hash and timestamp are plaintext (queryable), but the actual signature is encrypted. An attacker who compromises the audit storage cannot extract signatures.
+
+### Session vs persistent counters
+
+The `requests_this_session` counter resets on redeploy (MRENCLAVE), while `tx_count` persists (MRSIGNER). This gives you both session-scoped and all-time metrics.
