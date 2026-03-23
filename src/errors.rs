@@ -19,4 +19,10 @@ pub enum SdkError {
 
     #[error("Attestor not initialized")]
     NotInitialized,
+
+    #[error("Seal error: {0}")]
+    SealError(String),
+
+    #[error("Crypto error: {0}")]
+    CryptoError(String),
 }

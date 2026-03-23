@@ -28,7 +28,11 @@ thiserror = "1"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 guarantee-macros = { version = "0.1.0", path = "macros" }
+aes-gcm = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
 
 [dev-dependencies]
 axum = "0.7"
 reqwest = { version = "0.12", features = ["json"] }
+tempfile = "3"
