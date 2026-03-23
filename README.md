@@ -6,7 +6,7 @@ TEE attestation SDK for Rust. Cryptographic proof that your code runs in a Trust
 
 ```toml
 [dependencies]
-guarantee = "0.1"
+guarantee = "0.1.1"
 ```
 
 ```rust
