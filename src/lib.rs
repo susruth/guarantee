@@ -15,10 +15,8 @@ pub use response::{AttestationHeader, AttestedResponse};
 pub use types::{MrEnclave, MrSigner, StartupQuote};
 
 // Re-export proc macros from guarantee-macros crate.
-// `attest` (proc_macro_attribute) is re-exported via src/macros.rs.
-// `state` (proc_macro) and `Encrypted` (proc_macro_derive) use the
-// extern crate re-export pattern since pub use doesn't work for these.
-#[doc(hidden)]
+// All three macro types (attribute, derive, function-like) are re-exported
+// so users only need `use guarantee::{attest, state, Encrypted}`.
 pub use guarantee_macros::Encrypted;
 
 /// Declare TEE state with automatic key management and sealing.
@@ -35,9 +33,4 @@ pub use guarantee_macros::Encrypted;
 ///     UserRecord,
 /// }
 /// ```
-#[macro_export]
-macro_rules! state {
-    ($($tt:tt)*) => {
-        ::guarantee_macros::state!($($tt)*);
-    };
-}
+pub use guarantee_macros::state;
