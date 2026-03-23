@@ -135,6 +135,30 @@ state.rotate_master_key()?;
 
 Retired keys are kept so existing encrypted data can still be decrypted. The `decrypt_*` methods automatically try retired keys when the current key fails.
 
+### Backup and restore
+
+Snapshot sealed state to a backup directory and restore it on another node:
+
+```rust
+// Backup current sealed state
+state.backup(
+    std::path::Path::new("./sealed"),
+    std::path::Path::new("./backup"),
+)?;
+
+// Restore from backup (static method — creates the seal directory)
+TeeState::restore(
+    std::path::Path::new("./backup"),
+    std::path::Path::new("./sealed"),
+)?;
+```
+
+The backup directory contains `enclave.sealed`, `signer.sealed`, and a `backup_metadata.json` with schema version information.
+
+### Schema migration
+
+Each state tier has a schema version counter. When you add new fields to your state types and increment the schema version, `TeeState::initialize` detects the version mismatch, migrates to the new defaults, and re-seals automatically.
+
 ## Typical usage pattern
 
 ```rust

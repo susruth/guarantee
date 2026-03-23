@@ -81,6 +81,17 @@
 //! | `GUARANTEE_ENCLAVE` | `1` | Activates real SGX `/dev/attestation` calls. Unset for dev mode. |
 //! | `GUARANTEE_ATTEST_MODE` | `startup-only` | Only produce the startup quote; skip per-response signatures. |
 //!
+//! ## Key capabilities
+//!
+//! - **`state!` macro** — Declares TEE state with MRENCLAVE / MRSIGNER / external tiers,
+//!   generates `TeeState` with `initialize`, `seal`, `backup`, `restore`, and schema migration.
+//! - **`#[attest]`** — Wraps axum handlers for automatic per-response Ed25519 signing.
+//! - **`#[derive(Encrypted)]` + `#[encrypt]`** — Field-level AES-256-GCM encryption for external databases.
+//! - **Key rotation** — `check_rotation()` / `rotate_master_key()` with retired key fallback.
+//! - **Backup/restore** — `state.backup(seal_dir, backup_dir)` / `TeeState::restore(backup_dir, seal_dir)`.
+//! - **RA-TLS** *(feature flag)* — `serve_ra_tls` for HTTPS with embedded attestation,
+//!   `connect()` for inter-enclave calls with MRENCLAVE pinning, and WebSocket over RA-TLS.
+//!
 //! ## Modules
 //!
 //! - [`attestation`] — [`EnclaveAttestor`] and [`AttestationMode`]
@@ -90,7 +101,7 @@
 //! - [`response`] — [`AttestationHeader`] and [`AttestedResponse`]
 //! - [`seal`] — SGX sealing / unsealing for persistent TEE state
 //! - [`types`] — Core TEE types: [`MrEnclave`], [`MrSigner`], [`StartupQuote`]
-//! - [`ra_tls`] — RA-TLS server and inter-enclave client *(feature-gated)*
+//! - [`ra_tls`] — RA-TLS server, inter-enclave client, and WebSocket *(feature-gated)*
 
 pub mod attestation;
 pub mod crypto;

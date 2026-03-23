@@ -79,6 +79,8 @@ pub struct TeeState {
 impl TeeState {
     pub fn initialize(seal_dir: &Path) -> Result<Self, SdkError>;
     pub fn seal(&self, seal_dir: &Path) -> Result<(), SdkError>;
+    pub fn backup(&self, seal_dir: &Path, backup_dir: &Path) -> Result<(), SdkError>;
+    pub fn restore(backup_dir: &Path, seal_dir: &Path) -> Result<(), SdkError>;
 }
 ```
 

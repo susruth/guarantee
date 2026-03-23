@@ -96,8 +96,11 @@ Works without SGX hardware in dev mode (`GUARANTEE_ENCLAVE` not set).
 | `#[attest]` | Automatic per-response Ed25519 signing via axum handler macro |
 | `#[derive(Encrypted)]` + `#[encrypt]` | AES-256-GCM field-level encryption for external databases |
 | Key rotation | Automatic 90-day master key rotation with retired key fallback |
-| Backup / restore | Sealed state can be snapshotted and restored across nodes |
+| Backup / restore | `state.backup(seal_dir, backup_dir)` / `TeeState::restore(backup_dir, seal_dir)` |
+| Schema migration | Automatic schema versioning — old sealed state is migrated on load |
 | RA-TLS *(feature flag)* | HTTPS with SGX quote embedded in TLS certificate |
+| Inter-enclave `connect()` *(feature flag)* | RA-TLS client for calling other enclaves with MRENCLAVE pinning |
+| WebSocket *(feature flag)* | Attested WebSocket connections over RA-TLS |
 
 ## Feature Flags
 

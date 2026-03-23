@@ -52,6 +52,65 @@ Use RA-TLS when you need **transport-level attestation** — proving the TLS con
 
 For maximum security, use both: RA-TLS for transport attestation, `#[attest]` for data attestation.
 
+## Inter-Enclave Connections (`connect`)
+
+Use `guarantee::connect()` to call other enclaves with RA-TLS verification. The TLS handshake verifies the target's attestation quote automatically.
+
+```rust
+use guarantee::connect;
+use guarantee::MrEnclave;
+
+let expected = MrEnclave::new(/* known measurement */);
+
+let conn = connect("https://oracle.internal:8443")
+    .with_mrenclave(expected)
+    .build()?;
+
+let resp = conn.get("/price/BTC").await?;
+let price: PriceResponse = resp.json().await?;
+```
+
+The builder supports:
+
+| Method | Description |
+|--------|-------------|
+| `with_mrenclave(mr)` | Pin to a specific MRENCLAVE — rejects mismatches during handshake |
+| `allow_dev_mode(bool)` | Allow connections to non-enclave targets (defaults to `true` in dev mode) |
+| `build()` | Create the `EnclaveConnection` with a configured `reqwest::Client` |
+
+`EnclaveConnection` provides `get(path)` and `post(path, body)` methods.
+
+## WebSocket over RA-TLS
+
+WebSocket connections served via `serve_ra_tls` are automatically attested at the TLS layer. No per-message signing is needed — the entire connection is attested during the handshake.
+
+```rust
+use guarantee::ra_tls::websocket::{WsMessage, WsSocket, WsUpgrade};
+use axum::response::IntoResponse;
+
+async fn ws_handler(ws: WsUpgrade) -> impl IntoResponse {
+    ws.on_upgrade(handle_socket)
+}
+
+async fn handle_socket(mut socket: WsSocket) {
+    while let Some(Ok(msg)) = socket.recv().await {
+        if let axum::extract::ws::Message::Text(text) = msg {
+            socket.send(axum::extract::ws::Message::Text(format!("echo: {text}"))).await.ok();
+        }
+    }
+}
+```
+
+Add WebSocket routes to your RA-TLS router like any axum route:
+
+```rust
+let app = Router::new()
+    .route("/ws", get(ws_handler))
+    .route("/api", get(api_handler));
+
+serve_ra_tls(app, 8080, 8443).await?;
+```
+
 ## Dependencies
 
 The `ra-tls` feature adds:
