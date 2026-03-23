@@ -1,0 +1,17 @@
+[package]
+name = "guarantee-macros"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Proc macros for the guarantee TEE attestation SDK"
+repository = "https://github.com/guaranteerun/guarantee"
+keywords = ["tee", "sgx", "attestation"]
+categories = ["cryptography"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
