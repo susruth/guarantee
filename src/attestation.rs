@@ -276,7 +276,6 @@ impl EnclaveAttestor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::response::hex_encode;
 
     #[tokio::test]
     async fn initialize_succeeds_in_dev_mode() {
